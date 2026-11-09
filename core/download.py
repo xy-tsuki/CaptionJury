@@ -147,6 +147,8 @@ class Downloader:
             errors = []
             for source in self._sources[name]:
                 cur["source"] = models.SOURCES[source]
+                if errors:
+                    cur["note"] = "；".join(errors) + f"。已改用{models.SOURCES[source]}"
                 got, t0 = [0], time.time()
 
                 def on_bytes(n):
@@ -160,8 +162,7 @@ class Downloader:
                 except Cancelled:
                     raise
                 except Exception as e:
-                    errors.append(f"{models.SOURCES[source]}：{str(e)[:160]}")
-                    cur["note"] = "，".join(errors) + "；正在换下一个来源"
+                    errors.append(f"{models.SOURCES[source]}失败：{str(e)[:160]}")
             else:
                 raise IOError("所有来源都下载失败。" + "；".join(errors))
             base += f["size"]
