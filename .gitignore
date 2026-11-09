@@ -32,3 +32,6 @@ desktop.ini
 
 # Hand-corrected reference transcripts of private recordings stay on this computer
 参考稿*.txt
+
+# 打包输出（packaging/build.ps1）
+/build/

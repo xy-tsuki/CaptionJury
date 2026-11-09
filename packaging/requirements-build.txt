@@ -1,0 +1,6 @@
+﻿# 打包用：固定版本，保证每次构建出来的安装包一样。升级时改这里并在本机跑一遍 packaging/build.ps1。
+pywebview==6.2.1
+pythonnet==3.2.1
+httpx==0.28.1
+pywin32==312
+pyinstaller==6.22.3
