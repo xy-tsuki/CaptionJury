@@ -19,3 +19,4 @@ jobs:
       # Unit tests only: they need no models, GPU or network
       - run: python tests/speakers_unit.py
       - run: python tests/deepseek_unit.py
+      - run: python tests/backups_unit.py
