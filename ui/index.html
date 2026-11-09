@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>听写</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app fixed t-light">
+  <header class="top">
+    <span class="brand">听写</span>
+    <nav class="nav" aria-label="主导航">
+      <a href="#new" data-v="new">新建</a>
+      <a href="#progress" data-v="progress">进度</a>
+      <a href="#review" data-v="review">校对</a>
+      <a href="#settings" data-v="settings">设置</a>
+    </nav>
+    <span class="sys mono" id="sys"></span>
+  </header>
+  <div id="view" class="view"></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
