@@ -169,6 +169,10 @@ textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:1.7}
 .mcard .muse{display:flex;flex-wrap:wrap;align-items:center;gap:4px 24px}
 .mcard .muse .faint{font-size:12px}
 .mcard .mrow{grid-template-columns:90px minmax(0,1fr) 72px}
+.mcard .mget{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:8px 0}
+.mcard .mget select{width:auto;min-width:200px}
+.mcard .dlst{font-size:12px;color:var(--fg2);flex-basis:100%}
+.mcard .dlst:empty{display:none}
 
 @media (max-width:900px){
 .app.fixed{height:auto}

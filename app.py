@@ -14,7 +14,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, models, pipeline, store, subtitles
+from core import deepseek, download, models, pipeline, store, subtitles
 
 ROOT = Path(__file__).parent
 UI = ROOT / "ui"
@@ -81,6 +81,7 @@ class Api:
         self._dropped = []
         self._vram = (0.0, None)
         self._window = None
+        self._downloads = download.Downloader(store.load_config, store.save_config)
 
     # ---------- files ----------
     def pick_files(self):
@@ -246,8 +247,22 @@ class Api:
             "name": name, "label": m["label"], "role": m["role"], "desc": m["desc"], "langs": list(m.get("langs", ())),
             "files": [{"key": k, "path": cfg[k], "ok": Path(cfg[k]).is_file()} for k in m["files"]],
             "installed": models.installed(cfg, name),
+            "size": sum(f["size"] for k, f in m["files"].items() if not Path(cfg[k]).is_file()),
             "use": [lang for lang in m.get("langs", ()) if name in picked.get(lang, [])],
         } for name, m in models.MODELS.items()]
+
+    def sources(self):
+        return [{"key": k, "label": v} for k, v in models.SOURCES.items()]
+
+    def download_model(self, name, source):
+        """排队下载一个模型缺的文件。"""
+        return self._downloads.add(name, source)
+
+    def cancel_download(self):
+        self._downloads.cancel()
+
+    def download_status(self):
+        return self._downloads.status()
 
     def set_backup(self, name, lang, on):
         """Turns a backup model on or off for sentences in one language."""

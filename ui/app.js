@@ -390,9 +390,12 @@ async function renderSettings() {
   const c = S.cfg = await api().config();
   const ok = await api().check_models();
   const ms = await api().models();
+  const srcs = await api().sources();
+  const gb = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+  const fetchRow = (m) => m.installed ? '' : `<div class="mget" data-get="${m.name}"><select class="field" data-src="${m.name}" aria-label="${esc(m.label)} 下载来源">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select><button class="btn" type="button" data-dl="${m.name}" data-label="下载（${gb(m.size)}）">下载（${gb(m.size)}）</button><span class="dlst" data-dlst="${m.name}"></span></div>`;
   const LANG = { zh: '中文', ja: '日语' };
   const files = (m) => m.files.map((f) => `<div class="mrow"><span>${m.files.length > 1 ? esc(f.key.replace(/^\w+_/, '')) : '文件'}</span><input class="field mono p" data-cfg="${f.key}" value="${esc(f.path)}" aria-label="${esc(m.label)} 路径"><span class="ok">${f.ok ? '就绪' : '找不到文件'}</span></div>`).join('');
-  const card = (m) => `<div class="mcard"><div class="mhead"><b>${esc(m.label)}</b><span class="ok">${m.installed ? '已安装' : '未安装'}</span></div><p class="desc">${esc(m.desc)}</p>${m.role === 'backup' ? `<div class="muse">${m.langs.map((l) => `<label class="check"><input type="checkbox" data-bk="${m.name}" data-lang="${l}" ${m.use.includes(l) ? 'checked' : ''}><span>用于${LANG[l]}</span></label>`).join('')}${m.installed ? '' : '<span class="faint">未安装时不会使用</span>'}</div>` : ''}${files(m)}</div>`;
+  const card = (m) => `<div class="mcard"><div class="mhead"><b>${esc(m.label)}</b><span class="ok">${m.installed ? '已安装' : '未安装'}</span></div><p class="desc">${esc(m.desc)}</p>${fetchRow(m)}${m.role === 'backup' ? `<div class="muse">${m.langs.map((l) => `<label class="check"><input type="checkbox" data-bk="${m.name}" data-lang="${l}" ${m.use.includes(l) ? 'checked' : ''}><span>用于${LANG[l]}</span></label>`).join('')}${m.installed ? '' : '<span class="faint">未安装时不会使用</span>'}</div>` : ''}${files(m)}</div>`;
   const group = (role) => ms.filter((m) => m.role === role).map(card).join('');
   view.innerHTML = `
   <main class="s-grid">
@@ -442,6 +445,8 @@ async function renderSettings() {
   </main>`;
   $$('[data-j]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); $('#' + a.dataset.j).scrollIntoView(); }; });
   $$('[data-cfg]').forEach((i) => { i.onchange = () => api().save_config({ [i.dataset.cfg]: i.value }); });
+  $$('[data-src]').forEach((s) => { s.onchange = () => { S.src = s.value; }; });
+  watchDownloads();
   $$('[data-bk]').forEach((i) => { i.onchange = () => api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); });
   $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); renderSettings(); }; });
   $('#ksave').onclick = async () => {
@@ -470,6 +475,34 @@ function route() {
   else if (v === 'review') renderReview();
   else if (v === 'settings') renderSettings();
   else renderNew();
+}
+
+/* 下载进度：设置页打开、并且有下载在进行时每秒刷新一次 */
+async function watchDownloads() {
+  clearTimeout(S.dlT);
+  if (!$('[data-get]')) return;
+  const st = await api().download_status();
+  const cur = st.current;
+  $$('[data-dlst]').forEach((el) => {
+    const name = el.dataset.dlst;
+    const btn = $(`[data-dl="${name}"]`);
+    btn.textContent = btn.dataset.label;
+    btn.onclick = async () => { await api().download_model(name, $(`[data-src="${name}"]`).value); watchDownloads(); };
+    if (cur && cur.name === name) {
+      const pct = cur.total ? Math.floor(cur.done / cur.total * 100) : 0;
+      el.textContent = `${pct}%  ${(cur.speed / 1e6).toFixed(1)} MB/s  ${cur.source}${cur.note ? '。' + cur.note : ''}`;
+      btn.textContent = '取消';
+      btn.onclick = async () => { await api().cancel_download(); watchDownloads(); };
+    } else if (st.queue.includes(name)) {
+      el.textContent = '排队中';
+    } else if (st.failed[name]) {
+      el.textContent = st.failed[name];
+    } else {
+      el.textContent = '';
+    }
+  });
+  if (st.done.some((n) => $(`[data-get="${n}"]`))) return renderSettings();  // 下好了：重新检查文件
+  if (cur || st.queue.length) S.dlT = setTimeout(watchDownloads, 1000);
 }
 
 async function poll() {
