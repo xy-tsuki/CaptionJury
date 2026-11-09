@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Test output: subtitles written while trying the app on real videos
+/*.srt
+/*.ass
+/*.vtt
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Models and media are never kept in the repository
+*.gguf
+*.bin
+*.wav
+*.mp4
+
+# Logs, OS and editor files
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
