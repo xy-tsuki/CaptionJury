@@ -1,6 +1,7 @@
 """Local settings, DPAPI-encrypted API key, and job files."""
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,8 @@ CONFIG = HOME / "config.json"
 KEYFILE = HOME / "deepseek.key"
 MODELS_DIR = HOME / "models"
 RUNTIME_DIR = HOME / "runtime"
+# 安装版自带的 ffmpeg，放在 exe 旁边的 ffmpeg 文件夹里；源码运行时用 PATH 里的 ffmpeg
+BUNDLED_FFMPEG = Path(sys.executable).parent / "ffmpeg" / "ffmpeg.exe"
 
 DEFAULTS = {
     "gpu_backend": "cuda",
@@ -42,6 +45,8 @@ def load_config():
     cfg = dict(DEFAULTS)
     if CONFIG.exists():
         cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+    if cfg["ffmpeg"] == "ffmpeg" and getattr(sys, "frozen", False) and BUNDLED_FFMPEG.is_file():
+        cfg["ffmpeg"] = str(BUNDLED_FFMPEG)
     return cfg
 
 

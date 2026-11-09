@@ -113,4 +113,30 @@ for _ in range(100):
 err = dl.status()["failed"][name]
 assert "所有来源都下载失败" in err and "Hugging Face" in err and "GitHub" in err, err
 models.MODELS[name]["files"]["whisper_model"] = real
+
+# 7. 运行库：下载 zip、校验、解压到设置里的目录（zip 里多一层文件夹），删掉 zip
+import io, zipfile
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w") as z:
+    z.writestr("crispasr-windows-x86_64-vulkan/crispasr.exe", b"exe")
+    z.writestr("crispasr-windows-x86_64-vulkan/ggml.dll", b"dll")
+ZIP = buf.getvalue()
+rt = models.RUNTIMES["vulkan"]["file"]
+real_rt = dict(rt)
+rt.update(size=len(ZIP), sha256=hashlib.sha256(ZIP).hexdigest(), url=base + "/rt/vulkan.zip")
+FILES["/rt/vulkan.zip"] = ZIP
+cfg["runtime_vulkan"] = str(tmp / "runtime" / "crispasr-vulkan")
+(tmp / "runtime" / "crispasr-vulkan").mkdir(parents=True)
+(tmp / "runtime" / "crispasr-vulkan" / "old.dll").write_bytes(b"old")  # 旧版本留下的文件要清掉
+dl.add("runtime_vulkan", "hf")
+for _ in range(100):
+    if not dl._thread.is_alive():
+        break
+    time.sleep(0.05)
+st = dl.status()
+assert "runtime_vulkan" in st["done"], st
+d = Path(cfg["runtime_vulkan"])
+assert sorted(p.name for p in d.iterdir()) == ["crispasr.exe", "ggml.dll"], list(d.iterdir())
+assert not any(p.suffix in (".zip", ".part") or p.name.endswith(".unzip") for p in d.parent.iterdir()), list(d.parent.iterdir())
+rt.clear(); rt.update(real_rt)
 print("all passed")

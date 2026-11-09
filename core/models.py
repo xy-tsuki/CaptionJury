@@ -68,6 +68,23 @@ SOURCES = {
 }
 
 
+# CrispASR 运行库：从官方 GitHub Release 下载 zip，解压到数据目录。key 和设置里的 gpu_backend 一致。
+CRISPASR_RELEASE = "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.50/"
+RUNTIMES = {
+    "cuda": {"label": "CrispASR 0.8.50 · CUDA 13", "dir": "crispasr-cuda13",
+             "desc": "NVIDIA 显卡用，速度最快。需要 580 以上版本的显卡驱动。",
+             "file": {"path": "crispasr-windows-x86_64-cuda13.zip", "size": 569609379,
+                      "sha256": "f26ded177372f584f87f2644340d94ece7346ce7b7b8bc4c068a09333bd6b120"}},
+    "vulkan": {"label": "CrispASR 0.8.50 · Vulkan", "dir": "crispasr-vulkan",
+               "desc": "AMD、Intel 和较老的 NVIDIA 显卡用，比 CUDA 慢一些。",
+               "file": {"path": "crispasr-windows-x86_64-vulkan.zip", "size": 37063304,
+                        "sha256": "ac6fbfd527d782d7b999a135721dd131d76b18016283256c842b8f12411b1978"}},
+}
+RUNTIME_SOURCE = "CrispASR 官方 GitHub"
+for _r in RUNTIMES.values():
+    _r["file"]["url"] = CRISPASR_RELEASE + _r["file"]["path"]
+
+
 def default_paths(models_dir):
     """每个模型文件的配置键 -> 默认路径。"""
     return {key: str(models_dir / f["path"]) for m in MODELS.values() for key, f in m["files"].items()}
@@ -79,6 +96,8 @@ def installed(cfg, name):
 
 def urls(f, source):
     """从某个来源下载一个文件要用的 URL，按顺序排列（只有 GitHub 分卷时才有多个）。"""
+    if "url" in f:  # 运行库只有官方一个来源
+        return [f["url"]]
     name = Path(f["path"]).name
     if source == "hf":
         return [f"https://huggingface.co/{f['repo']}/resolve/main/{name}"]

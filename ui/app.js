@@ -435,6 +435,8 @@ async function renderSettings() {
           </div></div>
           <label class="lab"><span>运行时目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
+          <div><a class="btn sm" href="#setup">打开安装引导（下载运行库）</a></div>
+          <p class="faint" style="font-size:12px">听写 ${esc(c.version)}</p>
         </div>
       </section>
       <section class="sec" id="terms">
@@ -467,6 +469,87 @@ async function renderSettings() {
   if (del) del.onclick = async () => { await api().delete_key(); toast('密钥已删除'); renderSettings(); };
 }
 
+/* ---------- 首次运行引导：选运行库，下载运行库和必装模型 ---------- */
+const gbs = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
+
+async function renderSetup() {
+  const info = S.setup = await api().setup_info();
+  const srcs = await api().sources();
+  const g = info.gpu;
+  if (!S.pick) S.pick = g && g.cuda_ok ? 'cuda' : (info.runtimes.find((r) => r.installed) || { key: 'vulkan' }).key;
+  const gpuText = g
+    ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda_ok ? '推荐用 CUDA。' : '驱动低于 580，用不了 CUDA 13：先到 NVIDIA 官网更新驱动，或者选 Vulkan。')
+    : '没有检测到 NVIDIA 显卡，推荐用 Vulkan。';
+  const rt = info.runtimes.map((r) => `<label class="mcard" style="display:flex;gap:12px;align-items:flex-start;cursor:pointer"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><span><b>${esc(r.label)}</b>　<span class="faint mono">${r.installed ? '已安装' : gbs(r.size)}</span><br><span class="desc">${esc(r.desc)}</span></span></label>`).join('');
+  const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono">${m.installed ? '已安装' : gbs(m.size)}</span></div>`).join('');
+  view.innerHTML = `
+  <main class="s-grid" style="grid-template-columns:minmax(0,760px);justify-content:center">
+    <div class="s-main">
+      <section class="sec">
+        <div><h2>第一次使用</h2><p class="desc">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型。下载的文件放在 %LOCALAPPDATA%\\Tingxie，卸载程序时可以选择是否删除。</p></div>
+      </section>
+      <section class="sec">
+        <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
+        <div class="stack">${rt}</div>
+      </section>
+      <section class="sec">
+        <div><h2>2. 必装模型</h2><p class="desc">备用模型和说话人区分模型以后可以在设置里再下。</p></div>
+        <div class="stack">${mods}
+          <label class="lab"><span>模型下载来源（失败时自动换下一个）</span><select class="field" id="msrc" style="width:auto;min-width:260px">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
+        </div>
+      </section>
+      ${info.ffmpeg ? '' : '<section class="sec"><div><h2>FFmpeg</h2><p class="desc err">找不到 FFmpeg。请安装 FFmpeg，或在设置里填写 ffmpeg.exe 的路径。</p></div></section>'}
+      <section class="sec">
+        <div><h2>3. 下载</h2><p class="desc">中途关掉程序也没关系，下次再点下载会接着下。</p></div>
+        <div class="stack">
+          <div id="setst" class="stack"></div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap"><button class="btn solid" type="button" id="setgo">开始下载</button><a class="btn ghost" href="#settings">跳过，在设置里自己填路径</a></div>
+        </div>
+      </section>
+    </div>
+  </main>`;
+  $$('[name="rt"]').forEach((r) => { r.onchange = () => { S.pick = r.value; renderSetup(); }; });
+  $('#msrc').onchange = (e) => { S.src = e.target.value; };
+  $('#setgo').onclick = async () => {
+    if (setupReady()) { location.hash = '#new'; return; }
+    await api().save_config({ gpu_backend: S.pick });
+    $('#sys').textContent = S.pick === 'cuda' ? 'GPU · CUDA' : 'GPU · Vulkan';
+    if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
+    for (const m of S.setup.models) if (!m.installed) await api().download_model(m.name, $('#msrc').value);
+    watchSetup();
+  };
+  watchSetup();
+}
+
+function pickedRuntime() { return S.setup.runtimes.find((r) => r.key === S.pick); }
+function setupReady() { return pickedRuntime().installed && S.setup.models.every((m) => m.installed); }
+
+/* 引导页的下载进度，每秒刷新；全部装好后按钮变成“开始使用” */
+async function watchSetup() {
+  clearTimeout(S.setT);
+  if (location.hash !== '#setup' || !$('#setst')) return;
+  const st = await api().download_status();
+  const rt = pickedRuntime();
+  const items = [{ name: 'runtime_' + S.pick, label: rt.label, installed: rt.installed }, ...S.setup.models];
+  if (st.done.some((n) => items.find((i) => i.name === n && !i.installed))) return renderSetup();  // 有东西刚装好：重新检查
+  const cur = st.current;
+  const line = (i) => {
+    let t;
+    if (i.installed) t = '已就绪';
+    else if (cur && cur.name === i.name) t = `${cur.total ? Math.floor(cur.done / cur.total * 100) : 0}%　${(cur.speed / 1e6).toFixed(1)} MB/s　${esc(cur.source)}${cur.note ? '。' + esc(cur.note) : ''}`;
+    else if (st.queue.includes(i.name)) t = '排队中';
+    else if (st.failed[i.name]) t = '<span class="err">' + esc(st.failed[i.name]) + '</span>';
+    else t = '未下载';
+    return `<div style="display:flex;gap:16px;align-items:baseline"><span style="flex:0 0 200px">${esc(i.label)}</span><span class="mono" style="font-size:12px;min-width:0">${t}</span></div>`;
+  };
+  $('#setst').innerHTML = items.map(line).join('');
+  const busy = cur || st.queue.length;
+  const go = $('#setgo');
+  go.disabled = !!busy;
+  go.textContent = setupReady() ? '开始使用' : busy ? '正在下载…' : Object.keys(st.failed).length ? '重试下载' : '开始下载';
+  if (busy) S.setT = setTimeout(watchSetup, 1000);
+}
+
 /* ---------- shell ---------- */
 function route() {
   const v = (location.hash || '#new').slice(1);
@@ -474,6 +557,7 @@ function route() {
   if (v === 'progress') renderProgress();
   else if (v === 'review') renderReview();
   else if (v === 'settings') renderSettings();
+  else if (v === 'setup') renderSetup();
   else renderNew();
 }
 
@@ -522,7 +606,10 @@ async function boot() {
   S.cfg = await api().config();
   S.lang = S.cfg.lang; S.opt = S.cfg.opt; S.dia = S.cfg.diarize; S.formats = S.cfg.formats;
   $('#sys').textContent = S.cfg.gpu_backend === 'cuda' ? 'GPU · CUDA' : 'GPU · Vulkan';
+  $('#sys').title = '听写 ' + S.cfg.version;
   window.addEventListener('hashchange', route);
+  const si = await api().setup_info();  // 运行库或必装模型缺了，先进引导页
+  if (!si.runtimes.find((r) => r.key === si.backend).installed || !si.models.every((m) => m.installed)) location.hash = '#setup';
   window.addEventListener('resize', () => { if (location.hash === '#review') drawWave(); });
   route();
   poll();

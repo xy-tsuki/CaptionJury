@@ -1,10 +1,12 @@
-"""模型下载：断点续传、SHA-256 校验、失败时自动换下一个来源。
+"""模型和运行库下载：断点续传、SHA-256 校验、失败时自动换下一个来源。
 
 下载先写到目标文件旁边的 .part 文件，校验通过后才改名成正式文件，所以半截文件永远不会被当成已安装。
 GitHub 备份里超过 2 GB 的文件分成几卷，按顺序接在同一个 .part 文件后面。
 """
 import hashlib
+import shutil
 import threading
+import zipfile
 import time
 from pathlib import Path
 
@@ -105,6 +107,8 @@ class Downloader:
             self.queue.append(name)
             self.state["failed"].pop(name, None)
             self._sources[name] = [source] + [s for s in models.SOURCES if s != source]
+            if name.startswith("runtime_"):
+                self._sources[name] = ["official"]
             self._cancel = False
             if not self._thread or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._run, daemon=True)
@@ -137,18 +141,46 @@ class Downloader:
                 self.state["failed"][name] = str(e)[:300]
 
     def _one(self, name):
+        if name.startswith("runtime_"):
+            return self._runtime(name)
         cfg = self.load_config()
         files = [(key, f) for key, f in models.MODELS[name]["files"].items() if not Path(cfg[key]).is_file()]
-        total = sum(f["size"] for _, f in files)
-        cur = self.state["current"] = {"name": name, "label": models.MODELS[name]["label"], "done": 0, "total": total,
+        self._files(name, models.MODELS[name]["label"], [(f, cfg[key]) for key, f in files])
+
+    def _runtime(self, name):
+        """下载 CrispASR 运行库 zip，校验后解压到设置里的运行库目录。"""
+        r = models.RUNTIMES[name.removeprefix("runtime_")]
+        target = Path(self.load_config()[name])
+        zpath = target.parent / r["file"]["path"]
+        if not zpath.is_file():
+            self._files(name, r["label"], [(r["file"], zpath)])
+        self.state["current"]["note"] = "正在解压"
+        tmp = target.with_name(target.name + ".unzip")
+        shutil.rmtree(tmp, ignore_errors=True)
+        with zipfile.ZipFile(zpath) as z:
+            z.extractall(tmp)
+        exe = next(tmp.rglob("crispasr.exe"), None)
+        if not exe:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise IOError("压缩包里没有 crispasr.exe")
+        shutil.rmtree(target, ignore_errors=True)
+        exe.parent.replace(target)
+        shutil.rmtree(tmp, ignore_errors=True)
+        zpath.unlink()
+
+    def _files(self, name, label, files):
+        """按顺序下载 (文件信息, 目标路径) 列表，每个文件失败时换下一个来源。"""
+        total = sum(f["size"] for f, _ in files)
+        cur = self.state["current"] = {"name": name, "label": label, "done": 0, "total": total,
                                        "speed": 0, "source": "", "note": ""}
         base = 0
-        for key, f in files:
+        for f, dest in files:
             errors = []
             for source in self._sources[name]:
-                cur["source"] = models.SOURCES[source]
+                label = models.SOURCES.get(source, models.RUNTIME_SOURCE)
+                cur["source"] = label
                 if errors:
-                    cur["note"] = "；".join(errors) + f"。已改用{models.SOURCES[source]}"
+                    cur["note"] = "；".join(errors) + f"。已改用{label}"
                 got, t0 = [0], time.time()
 
                 def on_bytes(n):
@@ -157,12 +189,12 @@ class Downloader:
                     cur["speed"] = got[0] / max(0.5, time.time() - t0)
 
                 try:
-                    fetch_file(f, cfg[key], source, on_bytes, lambda: self._cancel)
+                    fetch_file(f, dest, source, on_bytes, lambda: self._cancel)
                     break
                 except Cancelled:
                     raise
                 except Exception as e:
-                    errors.append(f"{models.SOURCES[source]}失败：{str(e)[:160]}")
+                    errors.append(f"{label}失败：{str(e)[:160]}")
             else:
                 raise IOError("所有来源都下载失败。" + "；".join(errors))
             base += f["size"]

@@ -5,6 +5,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import threading
@@ -15,8 +16,10 @@ import webview
 from webview.dom import DOMEventHandler
 
 from core import deepseek, download, models, pipeline, store, subtitles
+from core.version import VERSION
 
-ROOT = Path(__file__).parent
+# 打包成 exe 后，界面文件在 PyInstaller 解出的目录（sys._MEIPASS）里
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 UI = ROOT / "ui"
 TOKEN = secrets.token_urlsafe(16)
 NO_WINDOW = 0x08000000
@@ -219,6 +222,7 @@ class Api:
     def config(self):
         cfg = store.load_config()
         cfg["has_key"] = store.has_key()
+        cfg["version"] = VERSION
         return cfg
 
     def save_config(self, changes):
@@ -277,6 +281,26 @@ class Api:
         cfg = store.load_config()
         runtime = Path(cfg["runtime_" + cfg["gpu_backend"]]) / "crispasr.exe"
         return {name: models.installed(cfg, name) for name in models.MODELS} | {"runtime": runtime.exists()}
+
+    def setup_info(self):
+        """首次运行引导页要的信息：显卡、两种运行库、必装模型是否就绪。"""
+        cfg = store.load_config()
+        gpu = None
+        try:
+            r = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+                               capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
+            if r.returncode == 0 and r.stdout.strip():
+                name, driver = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")[:2]]
+                gpu = {"name": name, "driver": driver, "cuda_ok": float(driver.split(".")[0]) >= 580}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        runtimes = [{"key": k, "label": r["label"], "desc": r["desc"], "size": r["file"]["size"],
+                     "installed": (Path(cfg["runtime_" + k]) / "crispasr.exe").is_file()} for k, r in models.RUNTIMES.items()]
+        need = [m for m in models.MODELS if models.MODELS[m]["role"] == "main"]
+        return {"gpu": gpu, "backend": cfg["gpu_backend"], "runtimes": runtimes,
+                "models": [{"name": m, "label": models.MODELS[m]["label"], "size": models.size(m),
+                            "installed": models.installed(cfg, m)} for m in need],
+                "ffmpeg": bool(shutil.which(cfg["ffmpeg"]) or Path(cfg["ffmpeg"]).is_file())}
 
 
 def main():
