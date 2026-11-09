@@ -3,6 +3,10 @@
 新的在上面。
 
 ## 2026-11-10
+- 启动方式从 run.bat 改成安装包：PyInstaller 打包成 Tingxie.exe，Inno Setup 生成 `Tingxie-Setup-<版本>.exe`（约 71 MB，含 FFmpeg 9.0.2）。安装时可选只为当前用户或所有用户；没有 WebView2 时顺便装上；卸载时问要不要删模型和设置。
+- 首次运行引导页：检测显卡和驱动，推荐 CUDA 或 Vulkan；运行库从 CrispASR 官方 Release 下载并解压，必装模型走原来的下载器。Issue #1 里"运行库不能在程序里下载"这一项做完了。
+- 发版改成推送 `vX.Y.Z` tag，由 CI 构建安装包并发 Release；dev 上改打包文件时 CI 也会构建一次（不发版）。
+- 验证：本机打包的 exe 在全新数据目录下进入引导页，从官方下载 Vulkan 运行库后转写 30 秒片段正常；CI 构建的安装包静默安装、启动、卸载都正常。没有试过安装向导的界面（中文页面、"所有用户"选项、卸载时的删除提示），也没有在没装 WebView2 的电脑上试过。
 - 上传 GitHub 备份 Release `models-v1`：7 个模型的 10 个附件（Qwen 2 卷、MiMo 3 卷）加两份许可证全文，Release 不标为最新版本。说明里写了每个文件的来源仓库、原始模型、许可证和"已量化"。
 - 上传前逐个核对大小和 SHA-256。本机的 Qwen 文件（`E:\AI\Qwen3-ASR-1.7B-OASR`）和 HF 上的不是同一版，多 1568 字节，所以改从 HF 重新下载后上传。
 - 查了各模型许可证，全部是 Apache-2.0 或 MIT，见 `docs/model-licenses.md`。
