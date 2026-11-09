@@ -14,6 +14,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest 显示进度条会慢很多
+$env:PYTHONUTF8 = "1"  # CI 的控制台是 cp1252，Python 输出中文会报错
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
