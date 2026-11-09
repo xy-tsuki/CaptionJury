@@ -6,6 +6,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 from core import store, pipeline
 import local_models
 local_models.use()
+if os.environ.get("BACKUPS"):  # e.g. {"zh": ["mimo", "whisper"], "ja": ["parakeet"]}
+    store.save_config({"backups": json.loads(os.environ["BACKUPS"])})
 
 class Fake(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -49,4 +51,4 @@ if q.state["finished"]:
         json.dump(j, open(os.environ["JOBOUT"], "w", encoding="utf-8"), ensure_ascii=False)
     print("duration", j["duration"], "segments", len(j["segments"]), j["warnings"], j["written"])
     for s in j["segments"][:40]:
-        print(f"{s['id']:3} {s['a']:7.2f}-{s['b']:7.2f} {s['lang']:3} {s['status']:4} Q={s['qwen'][:34]} | {s['alt_name']}={s['alt'][:34]}")
+        print(f"{s['id']:3} {s['a']:7.2f}-{s['b']:7.2f} {s['lang']:3} {s['status']:4} Q={s['qwen'][:34]} | " + " ".join(f"{k}={s[k][:34]}" for k in ("mimo", "whisper", "parakeet") if s.get(k)))

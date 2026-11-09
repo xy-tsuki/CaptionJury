@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import sentences
+from . import models, sentences
 
 MAX_OUTPUT_TOKENS = 32768
 MAX_TERMS = 40
@@ -30,7 +30,7 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
 每句的识别结果（没有的字段表示那份结果缺失）：
 - primary：Qwen3-ASR，主要结果，字幕默认用它。
 - primary2：同一个 Qwen3-ASR 换了切分位置再听一遍，还参考了术语提示。它和 primary 是独立的两次识别，但错误倾向相近。
-- backup：另一个识别模型（中文 MiMo，日语 Parakeet）。
+- backups：其他识别模型的结果，键是模型名，可能有好几份：MiMo（中文），Parakeet（只懂日语），Whisper（中日都能听，但偶尔会写出没说过的句子）。每份各算一个来源。
 - moss：说话人分离模型顺带写出的文字。整体不如 primary，但有时能听到别的模型漏掉的轻声和重叠的话。
 同一句的几份结果来自同一段声音，可以逐词对照。
 全文分批校对。context_before 和 context_after 是本批前后的句子，只用来理解上下文，不要列出它们的 id，也不要改它们。
@@ -149,7 +149,8 @@ def outline(cfg, key, segments):
     return str(reply["outline"]), terms[:MAX_TERMS]
 
 
-SOURCES = (("qwen2", "primary2"), ("alt", "backup"), ("moss", "moss"))
+SOURCES = (("qwen2", "primary2"), ("moss", "moss"))
+TRANSCRIPTS = ("qwen", "qwen2", "moss") + models.BACKUPS  # every field that holds a transcript of the sentence
 _KEEP = re.compile(r"[\W_]+")
 
 
@@ -158,6 +159,9 @@ def _row(s):
     for field, name in SOURCES + (("speaker", "speaker"),):
         if s.get(field):
             row[name] = s[field]
+    backups = {models.MODELS[k]["short"]: s[k] for k in models.BACKUPS if s.get(k)}
+    if backups:
+        row["backups"] = backups
     return row
 
 
@@ -203,7 +207,7 @@ def content_doubt(item, group):
     new = _plain(item.get("text", ""))
     if not new:
         return None
-    texts = ["".join(s.get(f) or "" for s in group) for f in ("qwen",) + tuple(f for f, _ in SOURCES)]
+    texts = ["".join(s.get(f) or "" for s in group) for f in TRANSCRIPTS]
     texts = [_plain(t) for t in texts if t]
     if new in texts:
         return None

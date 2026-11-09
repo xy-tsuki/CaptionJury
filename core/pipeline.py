@@ -20,7 +20,7 @@ LOAD_SHARE = 8  # part of a model's bar reserved for loading it
 ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu")
 NAMES = {
     "extract": "提取音频", "vad": "语音检测", "qwen": "Qwen3-ASR", "qwen2": "Qwen3-ASR 复核", "mimo": "MiMo-V2.5-ASR",
-    "parakeet": "parakeet-ctc-1.1b-ja", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
+    "parakeet": "parakeet-ctc-1.1b-ja", "whisper": "Whisper large-v3", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
 }
 
 
@@ -170,12 +170,14 @@ class Queue:
         }
         self.state["current"] = {"name": src.name, "lang": lang, "opt": opt, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]
+        # Which backup models hear which language's sentences, as the user picked them.
+        serves = {}
+        for seg_lang in [x for x in ("zh", "ja") if lang in (x, "mix")]:
+            for name in models.backups_for(cfg, seg_lang):
+                serves.setdefault(name, []).append(seg_lang)
         if opt:
             keys.append("qwen2")
-            if lang != "ja":
-                keys.append("mimo")
-            if lang != "zh":
-                keys.append("parakeet")
+            keys += [name for name in models.BACKUPS if name in serves]
             keys.append("deepseek")
         self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
         for lane in self.state["current"]["lanes"]:
@@ -203,21 +205,20 @@ class Queue:
         if opt:
             terms = self._outline(cfg, job)
             self._second_pass(cfg, d, asr_lang, segs, terms)
-            # Each sentence is compared with the backup that knows its language, heard in groups of whole sentences.
-            backups = [(k, sl, al, label) for k, sl, al, label in (("mimo", "zh", "zh", "MiMo"), ("parakeet", "ja", "ja", "Parakeet")) if k in keys]
+            # Each backup model hears, in groups of whole sentences, the sentences of the languages it was picked for.
             plans = {}
-            for key, seg_lang, _, _ in backups:
-                gs = sentences.groups(segs, seg_lang)
-                plans[key] = (gs, _group_slices(gs, job["duration"]))
-                self.tracker.set_audio(key, sum(b - a for a, b, _ in plans[key][1]))
-            for key, seg_lang, asr_lang, label in backups:
-                gs, gslices = plans[key]
+            for name, langs in serves.items():
+                gs = sentences.groups(segs, langs[0] if len(langs) == 1 else None)
+                gs = [g for g in gs if any(s["lang"] in langs for s in g)]
+                plans[name] = (gs, _group_slices(gs, job["duration"]), langs)
+                self.tracker.set_audio(name, sum(b - a for a, b, _ in plans[name][1]))
+            for name, (gs, gslices, langs) in plans.items():
                 if not gs:
-                    self.tracker.finish(key, "无此语言", learn=False)
+                    self.tracker.finish(name, "无此语言", learn=False)
                     continue
-                res, _ = self._asr(cfg, key, d, gslices, asr_lang)
+                res, _ = self._asr(cfg, name, d, gslices, langs[0] if len(langs) == 1 else "auto")
                 for i, g in enumerate(gs):
-                    sentences.attach_alt(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), (seg_lang,), label)
+                    sentences.attach_backup(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), langs, name)
         store.save_job(job)
         if opt:
             self._proofread(cfg, job)
@@ -409,7 +410,7 @@ class Queue:
                 s["why"] = "DeepSeek 返回的修改异常，暂用 Qwen 的识别。"
             return group
         for s in new:
-            agree = bool(s["alt"]) and _norm(s["alt"]) == _norm(s["qwen"])
+            agree = sentences.backups_agree(s)
             s["why"] = item.get("reason", "") or ""
             if item.get("uncertain"):
                 s["status"] = "ask"
@@ -503,9 +504,9 @@ class Queue:
                 ids, item = edits[s["id"]]
                 final += self._apply_edit([by_id[i] for i in ids], item)
             elif s["id"] not in covered:
-                agree = bool(s["alt"]) and _norm(s["alt"]) == _norm(s["qwen"])
+                agree = sentences.backups_agree(s)
                 s["status"] = "ok" if agree else "keep"
-                s["why"] = "" if agree else "两份结果不同，DeepSeek 保留了 Qwen 的写法。"
+                s["why"] = "" if agree else "几份结果不同，DeepSeek 保留了 Qwen 的写法。"
                 final.append(s)
         job["segments"] = sentences.finalize(final)
         if ignored + dropped:

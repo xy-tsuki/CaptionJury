@@ -281,9 +281,11 @@ function drawCmp() {
   $('#sub').lang = langAttr(s.lang);
   const cands = [];
   if (S.job.opt) {
-    cands.push(['Qwen3-ASR', s.qwen, s.alt || s.qwen2]);
+    const backups = [['mimo', 'MiMo'], ['whisper', 'Whisper'], ['parakeet', 'Parakeet']].filter(([k]) => s[k]);
+    if (s.alt) backups.push(['alt', s.alt_name]);  // jobs made before several backups were possible
+    cands.push(['Qwen3-ASR', s.qwen, backups.length ? s[backups[0][0]] : s.qwen2]);
     if (s.qwen2) cands.push(['Qwen 复核', s.qwen2, s.qwen]);
-    if (s.alt) cands.push([s.alt_name, s.alt, s.qwen]);
+    for (const [k, name] of backups) cands.push([name, s[k], s.qwen]);
     if (s.moss) cands.push(['MOSS', s.moss, s.qwen]);
   }
   const rows = cands.map(([who, t, other]) => {

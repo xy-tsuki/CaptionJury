@@ -2,6 +2,8 @@
 import difflib
 import re
 
+from . import models
+
 MAX_CHARS = 28  # a longer sentence is split at a comma, then at its longest pause
 PAUSE_BREAK = 1.2  # a comma followed by a pause this long ends a sentence
 # A pause without punctuation never does: Qwen punctuates well, and the aligner often leaves false gaps inside words.
@@ -258,7 +260,7 @@ def build(stream, lang):
         lead = len(raw) - len(raw.lstrip())
         seg_lang = lang if lang != "mix" else ("ja" if KANA.search(sentence) else "zh")
         segs.append({
-            "id": 0, "a": t[0], "b": t[1], "lang": seg_lang, "qwen": sentence, "alt": "", "alt_name": "", "text": sentence,
+            "id": 0, "a": t[0], "b": t[1], "lang": seg_lang, "qwen": sentence, "text": sentence, **dict.fromkeys(OTHERS, ""),
             "status": "raw", "why": "", "chunk": 0, "span": [0, len(sentence)], "times": times[a + lead:a + lead + len(sentence)], "qwen2": "", "moss": "",
             "speaker": _main_speaker(who[a:b]) if has_who else "",
         })
@@ -298,7 +300,7 @@ def _anchors(primary, backup):
     return [b for b in blocks if b.size >= 2] or blocks
 
 
-OTHERS = ("alt", "qwen2", "moss")  # other transcripts kept per sentence: backup model, Qwen's second pass, MOSS
+OTHERS = ("qwen2", "moss") + models.BACKUPS  # other transcripts kept per sentence: Qwen's second pass, MOSS, each backup model
 
 
 def cut_at(spans, primary, other):
@@ -321,7 +323,7 @@ def cut_at(spans, primary, other):
     return out
 
 
-def attach(group, other, field, label=None):
+def attach(group, other, field):
     """Stores, in field, the piece of another transcript of the group's audio that matches each sentence."""
     spans, primary = [], ""
     for s in group:
@@ -329,16 +331,19 @@ def attach(group, other, field, label=None):
         primary += s["qwen"]
     for s, piece in zip(group, cut_at(spans, primary, other.strip())):
         s[field] = piece
-        if label and piece:
-            s["alt_name"] = label
 
 
-def attach_alt(chunk_segs, primary, backup, langs, label):
-    """Cuts the backup model's text at the sentences of the primary text."""
+def attach_backup(chunk_segs, primary, backup, langs, field):
+    """Cuts a backup model's text at the sentences of the primary text and stores it, in field, on those in langs."""
     for s, piece in zip(chunk_segs, cut_at([tuple(s["span"]) for s in chunk_segs], primary, backup)):
         if piece and s["lang"] in langs:
-            s["alt"] = piece
-            s["alt_name"] = label
+            s[field] = piece
+
+
+def backups_agree(s):
+    """True when some backup model heard the sentence exactly as Qwen did."""
+    plain = lambda t: "".join(c for c in t if c not in SKIP)
+    return any(s.get(k) and plain(s[k]) == plain(s["qwen"]) for k in models.BACKUPS)
 
 
 def apply_edit(group, text):
@@ -375,9 +380,9 @@ def apply_edit(group, text):
         speaker = next((s["speaker"] for s in group if s.get("speaker")), "")
         a, b = (known[0][0], known[-1][1]) if known else (first["a"], first["b"])
         out.append({
-            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": q[q0:q1].strip(), "alt": "", "alt_name": first["alt_name"],
+            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": q[q0:q1].strip(),
             "text": line, "status": "raw", "why": "", "chunk": first["chunk"], "span": [q0, q1], "times": [], "speaker": speaker,
-            "qwen2": "", "moss": "",
+            **dict.fromkeys(OTHERS, ""),
         })
         if len(group) > 1:
             for f in OTHERS:
