@@ -6,27 +6,22 @@ from pathlib import Path
 
 import win32crypt
 
+from . import models
+
 HOME = Path(os.environ.get("TINGXIE_HOME") or Path(os.environ["LOCALAPPDATA"]) / "Tingxie")
 JOBS = HOME / "jobs"
 CONFIG = HOME / "config.json"
 KEYFILE = HOME / "deepseek.key"
-
-RUNTIMES = {
-    "cuda": r"E:\AI\Tingxu-runtimes\crispasr-cuda13-0.8.50\runtime\crispasr-windows-x86_64-cuda13",
-    "vulkan": r"E:\AI\Tingxu-runtimes\crispasr-vulkan-0.8.50\runtime\crispasr-windows-x86_64-vulkan",
-}
+MODELS_DIR = HOME / "models"
+RUNTIME_DIR = HOME / "runtime"
 
 DEFAULTS = {
     "gpu_backend": "cuda",
-    "runtime_cuda": RUNTIMES["cuda"],
-    "runtime_vulkan": RUNTIMES["vulkan"],
+    "runtime_cuda": str(RUNTIME_DIR / "crispasr-cuda13"),
+    "runtime_vulkan": str(RUNTIME_DIR / "crispasr-vulkan"),
     "ffmpeg": "ffmpeg",
-    "qwen_model": r"E:\AI\Qwen3-ASR-1.7B-OASR\qwen3-asr-1.7b-q8_0.gguf",
-    "mimo_model": r"E:\AI\MiMo-V2.5-ASR-GGUF\mimo-asr-q4_k.gguf",
-    "mimo_codec": r"E:\AI\MiMo-V2.5-ASR-GGUF\mimo-tokenizer-q4_k.gguf",
-    "parakeet_model": r"E:\AI\parakeet-ctc-1.1b-ja-GGUF\parakeet-ctc-1.1b-ja-q8_0.gguf",
-    "aligner_model": r"E:\AI\Qwen3-ForcedAligner-0.6B-GGUF\qwen3-forced-aligner-0.6b-q8_0.gguf",
-    "moss_model": r"E:\AI\MOSS-Transcribe-Diarize-GGUF\moss-transcribe-diarize-0.9b-q4_k.gguf",
+    **models.default_paths(MODELS_DIR),
+    "backups": models.DEFAULT_BACKUPS,
     "deepseek_url": "https://api.deepseek.com",
     "deepseek_model": "deepseek-flash",
     "glossary": "",

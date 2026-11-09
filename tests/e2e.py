@@ -4,6 +4,8 @@ os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 from core import store, pipeline
+import local_models
+local_models.use()
 
 class Fake(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass

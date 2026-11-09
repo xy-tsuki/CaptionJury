@@ -14,7 +14,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, pipeline, store, subtitles
+from core import deepseek, models, pipeline, store, subtitles
 
 ROOT = Path(__file__).parent
 UI = ROOT / "ui"
@@ -241,14 +241,7 @@ class Api:
     def check_models(self):
         cfg = store.load_config()
         runtime = Path(cfg["runtime_" + cfg["gpu_backend"]]) / "crispasr.exe"
-        return {
-            "qwen": Path(cfg["qwen_model"]).exists(),
-            "mimo": Path(cfg["mimo_model"]).exists() and Path(cfg["mimo_codec"]).exists(),
-            "parakeet": Path(cfg["parakeet_model"]).exists(),
-            "aligner": Path(cfg["aligner_model"]).exists(),
-            "moss": Path(cfg["moss_model"]).exists(),
-            "runtime": runtime.exists(),
-        }
+        return {name: models.installed(cfg, name) for name in models.MODELS} | {"runtime": runtime.exists()}
 
 
 def main():

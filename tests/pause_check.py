@@ -3,6 +3,8 @@ import os, sys, tempfile, time
 os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import pipeline
+import local_models
+local_models.use()
 
 q = pipeline.Queue()
 q.start([sys.argv[1]], "mix", False, ["SRT"])

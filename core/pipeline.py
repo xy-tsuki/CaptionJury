@@ -10,7 +10,7 @@ import time
 import wave
 from pathlib import Path
 
-from . import chunks, deepseek, progress, sentences, speakers, store, subtitles
+from . import chunks, deepseek, models, progress, sentences, speakers, store, subtitles
 
 NO_WINDOW = 0x08000000
 PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -272,15 +272,7 @@ class Queue:
         return [str(runtime / "crispasr.exe"), "--gpu-backend", cfg["gpu_backend"]]
 
     def _model_args(self, cfg, key):
-        if key == "qwen":
-            return ["--backend", "qwen3-1.7b", "-m", cfg["qwen_model"]]
-        if key == "qwen2":
-            return self._model_args(cfg, "qwen")
-        if key == "moss":
-            return ["--backend", "moss-diarize", "-m", cfg["moss_model"], "-n", "4096"]
-        if key == "mimo":
-            return ["--backend", "mimo-asr", "-m", cfg["mimo_model"], "--codec-model", cfg["mimo_codec"]]
-        return ["--backend", "fastconformer-ctc", "-m", cfg["parakeet_model"]]
+        return models.args(cfg, "qwen" if key == "qwen2" else key)
 
     def _spawn(self, cmd, cwd, on_err=None, on_out=None, what="语音识别进程退出"):
         self._check()

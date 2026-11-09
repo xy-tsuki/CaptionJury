@@ -8,6 +8,8 @@ os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 from core import pipeline, store
+import local_models
+local_models.use()
 
 lang = sys.argv[1]
 for path in sys.argv[2:]:
