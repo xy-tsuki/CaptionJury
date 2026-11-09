@@ -26,7 +26,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - `core/store.py`：配置、加密密钥和任务文件，全部在 `%LOCALAPPDATA%\Tingxie`（可用环境变量 `TINGXIE_HOME` 改位置）。
 - `ui/`：前端页面（上传、进度、审阅和逐句对照各模型结果、设置）。
 - `tests/`：单元测试和各种手动检查脚本，见下面"常用命令"。
-- `参考稿_VID_1001.txt`：一段测试视频的人工校对稿，用来算字错率。
+- `参考稿_*.txt`：测试视频的人工校对稿，用来算字错率。内容是私人录音，只放在本机，不进仓库（已写进 .gitignore）。
 
 ## 常用命令
 命令里的 `PY` 指 `%LOCALAPPDATA%\Tingxie\venv\Scripts\python.exe`（run.bat 建的虚拟环境）。

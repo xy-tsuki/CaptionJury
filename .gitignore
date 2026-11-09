@@ -29,3 +29,6 @@ desktop.ini
 .DS_Store
 .vscode/
 .idea/
+
+# Hand-corrected reference transcripts of private recordings stay on this computer
+参考稿*.txt
