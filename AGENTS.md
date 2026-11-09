@@ -53,8 +53,9 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **任务数据**：每个任务一个目录 `%LOCALAPPDATA%\Tingxie\jobs\<id>\`，里面有 job.json、音频和各模型的原始输出。
 
 ## 已知问题
-- GitHub 备份（Release `models-v1`）还没有上传，选这个来源会自动换到别的来源；各模型许可证已查过（Apache-2.0 / MIT，允许转存），见 `docs/model-licenses.md`；上传时 Release 说明要附来源和许可证全文。
-- CrispASR 运行库还不能在程序里下载，要用户自己放到 `%LOCALAPPDATA%\Tingxieuntime` 或在设置里改路径；见 GitHub Issue #1。
+- GitHub 备份（Release `models-v1`）已上传（2026-11-10），附件名和分卷必须和 `models.urls(f, "github")` 一致。以后换模型或换版本要开新的 Release（`models-v2`），并同步改 `GITHUB_BACKUP`；许可证见 `docs/model-licenses.md`，Release 说明要附来源和许可证全文。
+- CrispASR 运行库还不能在程序里下载，要用户自己放到 `%LOCALAPPDATA%\Tingxie
+untime` 或在设置里改路径；见 GitHub Issue #1。
 - 备用模型的文字按句切分靠文字对齐，没有标点的模型（Whisper）在句子边界偶尔会错位。
 - 只支持 Windows（DPAPI、WebView2、crispasr.exe）。
 - 重叠说话、小声说话识别不出来，是目前字错率的主要来源。
