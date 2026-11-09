@@ -314,8 +314,14 @@ def cut_at(spans, primary, other):
             continue
         first, last = pieces[0], pieces[-1]
         # Unmatched characters at either edge are likely misheard words, so keep as many from the other text.
-        start = max(floor, first[0] + first[2] - (first[0] - a))
-        end = min(len(other), last[1] + last[2] + (b - last[1]))
+        # Punctuation does not count: a transcript without any (Whisper) would otherwise shift a character per edge.
+        lead = sum(c not in SKIP for c in primary[a:first[0]])
+        trail = sum(c not in SKIP for c in primary[last[1]:b])
+        # Never reach into text that matches a neighbouring sentence.
+        before = max((k.b + k.size for k in anchors if k.a + k.size <= a), default=0)
+        after = min((k.b for k in anchors if k.a >= b), default=len(other))
+        start = max(floor, before, first[0] + first[2] - lead)
+        end = min(after, last[1] + last[2] + trail)
         while end < len(other) and other[end] in ENDS + CLOSERS + COMMAS:
             end += 1
         floor = max(floor, end)

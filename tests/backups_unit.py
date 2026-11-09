@@ -27,6 +27,13 @@ grp = [seg(1, "你好。", span=[0, 3]), seg(2, "こんにちは。", lang="ja",
 sentences.attach_backup(grp, "你好。こんにちは。", "你好。こんにちは", ("ja",), "whisper")
 assert grp[1]["whisper"] == "こんにちは" and not grp[0].get("whisper"), grp
 
+# A transcript without punctuation is cut at the same places, not one character off at every edge.
+grp = [seg(1, "它有两种零重力啊，", span=[0, 9]), seg(2, "还有一种是折平掉。", span=[9, 18]), seg(3, "先复原一下。", span=[18, 24])]
+sentences.attach_backup(grp, "它有两种零重力啊，还有一种是折平掉。先复原一下。", "它有两种零重力还有一种是直接折平掉先复原一下", ("zh",), "whisper")
+assert [s["whisper"] for s in grp] == ["它有两种零重力", "还有一种是直接折平掉", "先复原一下"], [s["whisper"] for s in grp]
+sentences.attach_backup(grp, "它有两种零重力啊，还有一种是折平掉。先复原一下。", "他有两种零重力呀还有一种是折平掉先复原一下", ("zh",), "mimo")
+assert [s["mimo"] for s in grp] == ["他有两种零重力呀", "还有一种是折平掉", "先复原一下"], [s["mimo"] for s in grp]
+
 # Picking: only installed models that know the language, in a fixed order.
 cfg = {k: __file__ for m in models.MODELS.values() for k in m["files"]}  # every file "exists"
 assert models.backups_for(dict(cfg, backups={"zh": ["whisper", "mimo"]}), "zh") == ["mimo", "whisper"]
