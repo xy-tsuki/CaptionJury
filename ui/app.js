@@ -389,7 +389,11 @@ function moveHead() {
 async function renderSettings() {
   const c = S.cfg = await api().config();
   const ok = await api().check_models();
-  const row = (name, key, val) => `<div class="mrow"><span>${name}</span><input class="field mono p" data-cfg="${key}" value="${esc(val)}" aria-label="${name} 路径"><span class="ok">${ok[{ qwen_model: 'qwen', mimo_model: 'mimo', parakeet_model: 'parakeet', aligner_model: 'aligner', moss_model: 'moss' }[key]] ? '就绪' : '找不到文件'}</span></div>`;
+  const ms = await api().models();
+  const LANG = { zh: '中文', ja: '日语' };
+  const files = (m) => m.files.map((f) => `<div class="mrow"><span>${m.files.length > 1 ? esc(f.key.replace(/^\w+_/, '')) : '文件'}</span><input class="field mono p" data-cfg="${f.key}" value="${esc(f.path)}" aria-label="${esc(m.label)} 路径"><span class="ok">${f.ok ? '就绪' : '找不到文件'}</span></div>`).join('');
+  const card = (m) => `<div class="mcard"><div class="mhead"><b>${esc(m.label)}</b><span class="ok">${m.installed ? '已安装' : '未安装'}</span></div><p class="desc">${esc(m.desc)}</p>${m.role === 'backup' ? `<div class="muse">${m.langs.map((l) => `<label class="check"><input type="checkbox" data-bk="${m.name}" data-lang="${l}" ${m.use.includes(l) ? 'checked' : ''}><span>用于${LANG[l]}</span></label>`).join('')}${m.installed ? '' : '<span class="faint">未安装时不会使用</span>'}</div>` : ''}${files(m)}</div>`;
+  const group = (role) => ms.filter((m) => m.role === role).map(card).join('');
   view.innerHTML = `
   <main class="s-grid">
     <nav class="s-nav" aria-label="设置分类"><a href="#settings" data-j="api">DeepSeek</a><a href="#settings" data-j="models">本地模型</a><a href="#settings" data-j="runtime">运行环境</a><a href="#settings" data-j="terms">校对术语</a></nav>
@@ -413,8 +417,12 @@ async function renderSettings() {
         </div>
       </section>
       <section class="sec" id="models">
-        <div><h2>本地模型</h2><p class="desc">修改路径后重新打开此页检查。</p></div>
-        <div>${row('Qwen3-ASR 1.7B', 'qwen_model', c.qwen_model)}${row('MiMo-V2.5-ASR', 'mimo_model', c.mimo_model)}${row('parakeet-ctc-1.1b-ja', 'parakeet_model', c.parakeet_model)}${row('Qwen3 强制对齐', 'aligner_model', c.aligner_model)}${row('MOSS 说话人', 'moss_model', c.moss_model)}</div>
+        <div><h2>本地模型</h2><p class="desc">Qwen 是主识别模型。开启精度优化时，勾选的备用模型会各识别一遍，交给 DeepSeek 投票；可以同时选好几个，越多越准，也越慢。修改路径后重新打开此页检查。</p></div>
+        <div class="stack">
+          <h3 class="cap">必装</h3>${group('main')}
+          <h3 class="cap">区分说话人时使用</h3>${group('diarize')}
+          <h3 class="cap">备用模型</h3>${group('backup')}
+        </div>
       </section>
       <section class="sec" id="runtime">
         <div><h2>运行环境</h2><p class="desc">所有模型都在 GPU 上运行。</p></div>
@@ -434,6 +442,7 @@ async function renderSettings() {
   </main>`;
   $$('[data-j]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); $('#' + a.dataset.j).scrollIntoView(); }; });
   $$('[data-cfg]').forEach((i) => { i.onchange = () => api().save_config({ [i.dataset.cfg]: i.value }); });
+  $$('[data-bk]').forEach((i) => { i.onchange = () => api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); });
   $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); renderSettings(); }; });
   $('#ksave').onclick = async () => {
     const v = $('#key').value.trim();

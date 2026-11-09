@@ -162,6 +162,13 @@ textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:1.7}
 .mrow:first-child{border-top:0}
 .mrow .p{font-size:12px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mrow .ok{font-size:12px;text-align:right;color:var(--fg2)}
+.mcard{border:1px solid var(--line);padding:14px 16px 4px}
+.mcard .mhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.mcard .mhead .ok{font-size:12px;color:var(--fg2)}
+.mcard .desc{margin:4px 0 2px}
+.mcard .muse{display:flex;flex-wrap:wrap;align-items:center;gap:4px 24px}
+.mcard .muse .faint{font-size:12px}
+.mcard .mrow{grid-template-columns:90px minmax(0,1fr) 72px}
 
 @media (max-width:900px){
 .app.fixed{height:auto}

@@ -238,6 +238,26 @@ class Api:
         except Exception as e:
             return {"error": str(e)[:200]}
 
+    def models(self):
+        """Every model, with its files and whether they are found, for the settings page."""
+        cfg = store.load_config()
+        picked = cfg.get("backups") or models.DEFAULT_BACKUPS
+        return [{
+            "name": name, "label": m["label"], "role": m["role"], "desc": m["desc"], "langs": list(m.get("langs", ())),
+            "files": [{"key": k, "path": cfg[k], "ok": Path(cfg[k]).is_file()} for k in m["files"]],
+            "installed": models.installed(cfg, name),
+            "use": [lang for lang in m.get("langs", ()) if name in picked.get(lang, [])],
+        } for name, m in models.MODELS.items()]
+
+    def set_backup(self, name, lang, on):
+        """Turns a backup model on or off for sentences in one language."""
+        cfg = store.load_config()
+        picked = {k: list(v) for k, v in (cfg.get("backups") or models.DEFAULT_BACKUPS).items()}
+        now = [k for k in picked.get(lang, []) if k != name] + ([name] if on else [])
+        picked[lang] = [k for k in models.BACKUPS if k in now]
+        store.save_config({"backups": picked})
+        return picked
+
     def check_models(self):
         cfg = store.load_config()
         runtime = Path(cfg["runtime_" + cfg["gpu_backend"]]) / "crispasr.exe"
