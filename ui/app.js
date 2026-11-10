@@ -9,21 +9,40 @@ const S = { cfg: null, files: [], lang: 'mix', opt: true, dia: false, formats: [
 const api = () => window.pywebview.api;
 
 function hms(t, ms) {
-  t = Math.max(0, t || 0);
-  const p = (n, w = 2) => String(Math.floor(n)).padStart(w, '0');
-  const base = `${p(t / 3600)}:${p((t / 60) % 60)}:${p(t % 60)}`;
-  return ms ? `${base},${p((t % 1) * 1000, 3)}` : base;
+  // 先换成整数毫秒再拆，避免 5.09 这种浮点数显示成 5,089
+  const n = Math.round(Math.max(0, t || 0) * 1000);
+  const s = ms ? Math.floor(n / 1000) : Math.floor(Math.max(0, t || 0));
+  const p = (x, w = 2) => String(Math.floor(x)).padStart(w, '0');
+  const base = `${p(s / 3600)}:${p((s / 60) % 60)}:${p(s % 60)}`;
+  return ms ? `${base},${p(n % 1000, 3)}` : base;
 }
 const bytes = (n) => (n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.round(n / 1e6) + ' MB');
 const langAttr = (l) => (l === 'ja' ? 'ja' : 'zh-CN');
 
 let toastT;
-function toast(msg) {
+/* action 可选：{ label, fn }，在提示里放一个按钮（比如撤销） */
+function toast(msg, action) {
   const t = $('#toast');
   t.textContent = msg;
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tact';
+    b.textContent = action.label;
+    b.onclick = () => { t.hidden = true; action.fn(); };
+    t.append(b);
+  }
   t.hidden = false;
   clearTimeout(toastT);
-  toastT = setTimeout(() => { t.hidden = true; }, 4200);
+  toastT = setTimeout(() => { t.hidden = true; }, action ? 8000 : 4200);
+}
+
+/* 解析时间码：00:01:02,345、1:02.3、62.3 都可以；格式不对返回 null */
+function parseTc(v) {
+  const parts = String(v).trim().replace(',', '.').split(':');
+  if (!parts[0] || parts.length > 3) return null;
+  const n = parts.map(Number);
+  return n.some((x) => !Number.isFinite(x) || x < 0) ? null : n.reduce((acc, x) => acc * 60 + x, 0);
 }
 
 /* ---------- new job ---------- */
@@ -217,10 +236,11 @@ async function renderReview() {
   const m = $('#media');
   $('#prev').onclick = () => step(-1);
   $('#next').onclick = () => step(1);
-  $('#play').onclick = () => (m.paused ? m.play() : m.pause());
+  $('#play').onclick = () => { S.stopAt = null; m.paused ? m.play() : m.pause(); };
   m.ontimeupdate = () => {
     $('#clock').textContent = hms(m.currentTime, true);
     moveHead();
+    if (S.stopAt != null && m.currentTime >= S.stopAt) { m.pause(); S.stopAt = null; }  // 播放这一条：到出点停
     const seg = j.segments.find((s) => m.currentTime >= s.a && m.currentTime < s.b);
     if (seg && seg.id !== S.sel && !m.paused) select(seg.id, false);
   };
@@ -296,9 +316,25 @@ function drawCmp() {
     <div class="cmp-h"><span class="cap">第 ${s.id} 条${S.job.opt ? ' · 候选对照' : ''}</span>${hasSpeakers() ? speakerBar(s) : ''}</div>
     ${rows}
     <label class="final"><span class="cap">最终字幕</span><textarea class="field" id="final" rows="2" lang="${langAttr(s.lang)}">${esc(s.text)}</textarea></label>
+    <div class="tim">
+      ${[['a', '入点'], ['b', '出点']].map(([k, l]) => `<div class="tim-r"><span class="cap">${l}</span><input class="field mono" data-tc="${k}" value="${hms(s[k], true)}" aria-label="${l}"><button class="btn sm" type="button" data-nudge="${k}" data-d="-0.1" aria-label="${l}提前 0.1 秒">−0.1</button><button class="btn sm" type="button" data-nudge="${k}" data-d="0.1" aria-label="${l}推后 0.1 秒">+0.1</button><button class="btn sm" type="button" data-here="${k}">设为播放位置</button></div>`).join('')}
+      <div class="tim-r"><span class="cap">时长</span><span class="mono dim">${(s.b - s.a).toFixed(2)} 秒</span><button class="btn sm" type="button" id="playseg">播放这一条</button><button class="btn sm ghost" type="button" id="del">删除这条</button></div>
+    </div>
     ${s.why ? `<p class="why">${esc(s.why)}</p>` : ''}`;
   $$('[data-adopt]').forEach((b) => { b.onclick = () => setText(b.dataset.adopt); });
   $('#final').onchange = (e) => setText(e.target.value);
+  const m = $('#media');
+  $$('[data-tc]').forEach((i) => {
+    i.onchange = () => {
+      const t = parseTc(i.value);
+      if (t == null) { toast('时间格式不对，例如 00:01:02,345'); drawCmp(); return; }
+      setTimes(i.dataset.tc, t);
+    };
+  });
+  $$('[data-nudge]').forEach((b) => { b.onclick = () => setTimes(b.dataset.nudge, s[b.dataset.nudge] + Number(b.dataset.d)); });
+  $$('[data-here]').forEach((b) => { b.onclick = () => setTimes(b.dataset.here, m.currentTime); });
+  $('#playseg').onclick = () => { m.currentTime = s.a; S.stopAt = s.b; m.play(); };
+  $('#del').onclick = deleteSeg;
   if (!hasSpeakers()) return;
   $('#spk').onchange = async (e) => {
     await api().set_speaker(S.job.id, s.id, e.target.value);
@@ -319,6 +355,34 @@ function speakerBar(s) {
 async function reloadSpeakers() {
   await openJob(S.job.id);
   drawList(); drawCmp();
+}
+
+/* 改入点或出点；服务器会把时间夹在前后两条之间，以返回的为准 */
+async function setTimes(k, t) {
+  const s = current();
+  const want = k === 'a' ? [t, s.b] : [s.a, t];
+  const got = await api().set_times(S.job.id, s.id, want[0], want[1]);
+  if (Math.abs(got[k] - t) > 0.0005) toast(k === 'a' ? '入点不能早于上一条的出点，也不能晚于出点' : '出点不能晚于下一条的入点，也不能早于入点');
+  s.a = got.a; s.b = got.b;
+  const m = $('#media');
+  if (m && k === 'a') m.currentTime = s.a;
+  drawList(); drawCmp(); drawWave();
+}
+
+async function deleteSeg() {
+  const segs = S.job.segments;
+  const i = segs.findIndex((x) => x.id === S.sel);
+  if (i < 0) return;
+  const r = await api().delete_segment(S.job.id, S.sel);
+  segs.splice(i, 1);
+  S.sel = (segs[i] || segs[i - 1] || {}).id;
+  drawFilters(); drawList(); drawCmp(); drawWave();
+  toast(`已删除第 ${r.seg.id} 条`, { label: '撤销', fn: async () => {
+    await api().restore_segment(S.job.id, r.seg, r.index);
+    await openJob(S.job.id);
+    S.sel = r.seg.id;
+    drawFilters(); drawList(); drawCmp(); drawWave();
+  } });
 }
 
 async function setText(t) {

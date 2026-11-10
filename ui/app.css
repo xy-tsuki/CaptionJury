@@ -221,6 +221,12 @@ textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:1.7}
 .cmp{overflow:auto;flex:none;max-height:46%}
 .final{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .final textarea{resize:none}
+.tim{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.tim-r{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tim-r .cap{width:36px}
+.tim-r input{width:130px;height:32px;padding:0 8px;font-size:12px}
+.tim-r #del{margin-left:auto}
+.toast .tact{margin-left:14px;background:none;border:0;border-bottom:1px solid currentColor;color:inherit;font:inherit;cursor:pointer;padding:0}
 .pick{height:32px;max-width:220px;background:transparent;border:1px solid var(--line2);color:var(--fg);font:inherit;font-size:12px;padding:0 6px}
 .frbar{display:flex;gap:8px;padding:10px 20px;border-bottom:1px solid var(--line);align-items:center}
 .frbar[hidden]{display:none}

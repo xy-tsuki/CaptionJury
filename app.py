@@ -23,6 +23,7 @@ ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 UI = ROOT / "ui"
 TOKEN = secrets.token_urlsafe(16)
 NO_WINDOW = 0x08000000
+MIN_LEN = 0.2  # 一条字幕最短 0.2 秒
 MEDIA_EXT = "*.mp4;*.mkv;*.mov;*.webm;*.avi;*.ts;*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg;*.opus"
 
 
@@ -167,6 +168,34 @@ class Api:
             if s["id"] == seg_id:
                 s["text"] = text
         store.save_job(j)
+
+    def set_times(self, jid, seg_id, a, b):
+        """改一条字幕的入点和出点（秒）。夹在前后两条之间、至少 MIN_LEN 秒长，返回实际保存的时间。"""
+        j = store.load_job(jid)
+        segs = j["segments"]
+        i = next(i for i, s in enumerate(segs) if s["id"] == seg_id)
+        lo = segs[i - 1]["b"] if i else 0.0
+        hi = segs[i + 1]["a"] if i + 1 < len(segs) else (j.get("duration") or 1e9)
+        a = round(min(max(float(a), lo), hi - MIN_LEN), 3)
+        b = round(min(max(float(b), a + MIN_LEN), hi), 3)
+        segs[i]["a"], segs[i]["b"] = a, b
+        store.save_job(j)
+        return {"a": a, "b": b}
+
+    def delete_segment(self, jid, seg_id):
+        """删掉一条字幕，返回它和原来的位置，供撤销。"""
+        j = store.load_job(jid)
+        i = next(i for i, s in enumerate(j["segments"]) if s["id"] == seg_id)
+        seg = j["segments"].pop(i)
+        store.save_job(j)
+        return {"seg": seg, "index": i}
+
+    def restore_segment(self, jid, seg, index):
+        """撤销删除：把字幕放回原来的位置。"""
+        j = store.load_job(jid)
+        if not any(s["id"] == seg["id"] for s in j["segments"]):
+            j["segments"].insert(min(index, len(j["segments"])), seg)
+            store.save_job(j)
 
     def replace_all(self, jid, find, repl):
         j = store.load_job(jid)
