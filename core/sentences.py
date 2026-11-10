@@ -305,12 +305,17 @@ OTHERS = ("qwen2", "moss") + models.BACKUPS  # other transcripts kept per senten
 
 def cut_at(spans, primary, other):
     """Cuts another transcript of the same audio at the sentence spans of the primary text, using their shared runs as anchors."""
+    return [other[c[0]:c[1]].strip() if c else "" for c in _cuts(spans, primary, other)]
+
+
+def _cuts(spans, primary, other):
+    """cut_at 的位置版：每句在 other 里的 (起, 止)，对不上任何字的句子是 None。"""
     anchors = _anchors(primary, other)
     floor, out = 0, []
     for a, b in spans:
         pieces = [(max(a, k.a), min(b, k.a + k.size), k.b - k.a) for k in anchors if k.a < b and k.a + k.size > a]
         if not pieces:
-            out.append("")
+            out.append(None)
             continue
         first, last = pieces[0], pieces[-1]
         # Unmatched characters at either edge are likely misheard words, so keep as many from the other text.
@@ -325,25 +330,128 @@ def cut_at(spans, primary, other):
         while end < len(other) and other[end] in ENDS + CLOSERS + COMMAS:
             end += 1
         floor = max(floor, end)
-        out.append(other[start:end].strip())
+        out.append((start, end))
     return out
 
 
+MIN_EXTRA = 2  # 对不上 Qwen 的文字至少有这么多个有效字（不算标点和语气词）才单独展示
+
+
+def worth_showing(text):
+    core = "".join(c for c in text if c not in SKIP)
+    return len(core) >= MIN_EXTRA and not is_filler(text)
+
+
+def leftovers(cuts, other):
+    """切分后没分到任何句子的文字，也就是 Qwen 没识别出的部分。返回 [(它前面那句的序号，没有就是 -1, 文字)]。"""
+    out, pos, prev = [], 0, -1
+    for k, c in enumerate(cuts + [(len(other), len(other))]):
+        if c is None:
+            continue
+        if c[0] > pos:
+            text = other[pos:c[0]].strip().lstrip("".join(ENDS + CLOSERS + COMMAS))
+            if worth_showing(text):
+                out.append((prev, text))
+        pos, prev = max(pos, c[1]), k
+    return out
+
+
+def _found(group, cuts, other):
+    """把 leftovers 的序号换成句子：[(前一句或 None, 后一句或 None, 文字)]，前后指组内的句子。"""
+    return [(group[p] if p >= 0 else None, group[p + 1] if p + 1 < len(group) else None, t) for p, t in leftovers(cuts, other)]
+
+
 def attach(group, other, field):
-    """Stores, in field, the piece of another transcript of the group's audio that matches each sentence."""
+    """Stores, in field, the piece of another transcript of the group's audio that matches each sentence.
+
+    返回对不上任何句子的文字（格式见 _found），由调用方决定要不要单独展示。
+    """
     spans, primary = [], ""
     for s in group:
         spans.append((len(primary), len(primary) + len(s["qwen"])))
         primary += s["qwen"]
-    for s, piece in zip(group, cut_at(spans, primary, other.strip())):
-        s[field] = piece
+    other = other.strip()
+    cuts = _cuts(spans, primary, other)
+    for s, c in zip(group, cuts):
+        s[field] = other[c[0]:c[1]].strip() if c else ""
+    return _found(group, cuts, other)
 
 
 def attach_backup(chunk_segs, primary, backup, langs, field):
-    """Cuts a backup model's text at the sentences of the primary text and stores it, in field, on those in langs."""
-    for s, piece in zip(chunk_segs, cut_at([tuple(s["span"]) for s in chunk_segs], primary, backup)):
+    """Cuts a backup model's text at the sentences of the primary text and stores it, in field, on those in langs.
+
+    返回对不上任何句子的文字（格式见 _found）。
+    """
+    cuts = _cuts([tuple(s["span"]) for s in chunk_segs], primary, backup)
+    for s, c in zip(chunk_segs, cuts):
+        piece = backup[c[0]:c[1]].strip() if c else ""
         if piece and s["lang"] in langs:
             s[field] = piece
+    return _found(chunk_segs, cuts, backup)
+
+
+EXTRA_GAP = 0.5  # 前后两句之间的空隙比这短，多出来的文字多半是对齐误差，不单独展示
+EXTRA_MIN_LEN = 0.3  # 插进去以后至少要有这么长
+EXTRA_WHY = "Qwen 没有识别出这段，这是其他模型听到的写法。用不上可以删掉。"
+EXTRA_ORDER = ("qwen2",) + models.BACKUPS + ("moss",)  # 几份写法都不一致时，默认文字按这个顺序取
+
+
+def extra_spot(segs, before, after, text):
+    """给一段 Qwen 没识别出的文字估一个时间：紧跟在前一句后面，或者紧挨着后一句前面，长度按字数估。
+
+    before / after 是它在组内的前后句；组的边界上缺的那一边从全文 segs 里找。返回 (起, 止, 语言)，放不下返回 None。
+    """
+    pos = {id(s): i for i, s in enumerate(segs)}
+    i = pos[id(before)] + 1 if before is not None else pos[id(after)]
+    prev = segs[i - 1] if i > 0 else None
+    nxt = segs[i] if i < len(segs) else None
+    lo = prev.get("spoken_end", prev["b"]) if prev else 0.0
+    hi = nxt["a"] if nxt else lo + 30
+    if hi - lo < EXTRA_GAP:
+        return None
+    dur = min(6.0, max(1.0, 0.25 * sum(c not in SKIP for c in text)))
+    a, b = (lo, min(hi, lo + dur)) if before is not None else (max(lo, hi - dur), hi)
+    return a, b, (before or after)["lang"]
+
+
+def _pick(texts):
+    """几份写法里选默认文字：和别的写法一致的最多者优先，一样多时按 EXTRA_ORDER。"""
+    plain = {f: "".join(c for c in t if c not in SKIP) for f, t in texts.items()}
+    order = [f for f in EXTRA_ORDER if f in texts]
+    return texts[max(order, key=lambda f: (sum(plain[g] == plain[f] for g in order), -order.index(f)))]
+
+
+def place_extras(segs, extras):
+    """把 Qwen 没识别出、其他模型听到的段落插成存疑字幕，重新编号后返回全部句子。
+
+    extras 是 {"a", "b", "lang", "field", "text"}；时间重叠的合成一条，每个模型的写法放在各自的字段里。
+    """
+    if not extras:
+        return segs
+    segs = sorted(segs, key=lambda s: s["a"])
+    clusters = []
+    for e in sorted(extras, key=lambda e: e["a"]):
+        c = clusters[-1] if clusters else None
+        if c and e["a"] < c["b"]:
+            c["b"] = max(c["b"], e["b"])
+            c["texts"].setdefault(e["field"], []).append(e["text"])
+        else:
+            clusters.append({"a": e["a"], "b": e["b"], "lang": e["lang"], "texts": {e["field"]: [e["text"]]}})
+    new = []
+    for c in clusters:
+        prev = next((s for s in reversed(segs) if s["a"] <= c["a"]), None)
+        nxt = next((s for s in segs if s["a"] > c["a"]), None)
+        a = max(c["a"], prev.get("spoken_end", prev["b"]) if prev else 0.0)
+        b = min(c["b"], nxt["a"]) if nxt else c["b"]
+        if b - a < EXTRA_MIN_LEN:
+            continue
+        texts = {f: "".join(ts) for f, ts in c["texts"].items()}
+        new.append({
+            "id": 0, "a": a, "b": b, "spoken_end": max(a, b - TAIL), "lang": c["lang"], "qwen": "", "text": _pick(texts),
+            "status": "ask", "why": EXTRA_WHY, "chunk": 0, "span": [0, 0], "times": [], "speaker": "",
+            **dict.fromkeys(OTHERS, ""), **texts,
+        })
+    return finalize(sorted(segs + new, key=lambda s: s["a"]))
 
 
 def backups_agree(s):

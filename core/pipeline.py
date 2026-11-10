@@ -180,6 +180,7 @@ class Queue:
             keys.append("qwen2")
             keys.append("deepseek")
         self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
+        self.extras = []  # Qwen 没识别出、其他模型听到的段落，校对完插成存疑字幕
         for lane in self.state["current"]["lanes"]:
             lane["name"] = NAMES[lane["key"]]
 
@@ -216,7 +217,8 @@ class Queue:
                     continue
                 res, _ = self._asr(cfg, name, d, gslices, langs[0] if len(langs) == 1 else "auto")
                 for i, g in enumerate(gs):
-                    sentences.attach_backup(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), langs, name)
+                    found = sentences.attach_backup(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), langs, name)
+                    self._keep_extras(segs, found, name)
             store.save_job(job)
             # 大纲参考全部备用结果，找出的专有名词作为提示交给 Qwen 复核
             terms = self._outline(cfg, job)
@@ -224,6 +226,7 @@ class Queue:
         store.save_job(job)
         if opt:
             self._proofread(cfg, job)
+        job["segments"] = sentences.place_extras(job["segments"], self.extras)
 
         job["segments"] = [s for s in job["segments"] if s["text"]]
         job["speakers"] = speakers.number(job["segments"])
@@ -460,7 +463,7 @@ class Queue:
         for n, g in enumerate(gs):
             t0 = (gs[n - 1][-1]["spoken_end"] + g[0]["a"]) / 2 if n else 0.0
             t1 = (g[-1]["spoken_end"] + gs[n + 1][0]["a"]) / 2 if n + 1 < len(gs) else 1e9
-            sentences.attach(g, sentences.text_between(stream, t0, t1), "qwen2")
+            self._keep_extras(segs, sentences.attach(g, sentences.text_between(stream, t0, t1), "qwen2"), "qwen2")
 
     def _attach_moss(self, slices, detail, segs):
         """Keeps, per sentence, the words MOSS heard for it, as one more transcript for proofreading."""
@@ -468,8 +471,18 @@ class Queue:
             first, last = slices[idx[0]], slices[idx[-1]]
             t0, t1 = first[2].get("own0", first[0]), last[2].get("own1", last[1])
             group = [s for s in segs if t0 <= s["a"] < t1]
+            text = "".join(text for _, text in turns)
             if group:
-                sentences.attach(group, "".join(text for _, text in turns), "moss")
+                self._keep_extras(segs, sentences.attach(group, text, "moss"), "moss")
+            elif sentences.worth_showing(text):  # 整块都没有 Qwen 的句子
+                self.extras.append({"a": t0, "b": t1, "lang": "ja" if sentences.KANA.search(text) else "zh", "field": "moss", "text": text.strip()})
+
+    def _keep_extras(self, segs, found, field):
+        """记下对不上 Qwen 任何句子的文字（Qwen 没识别出的部分），给它们估好时间。"""
+        for before, after, text in found:
+            spot = sentences.extra_spot(segs, before, after, text)
+            if spot:
+                self.extras.append({"a": spot[0], "b": spot[1], "lang": spot[2], "field": field, "text": text})
 
     def _proofread(self, cfg, job):
         if job.get("outline") is None:

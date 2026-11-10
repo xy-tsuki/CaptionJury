@@ -37,7 +37,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\Tingxie-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\Tingxie\Tingxie.exe`（目录结构和安装后一样，可以直接运行）。
 - 发版：改 `core/version.py` → 合并到 main → 推送 `vX.Y.Z` tag，`.github/workflows/release.yml` 会构建安装包并发 Release。在 Actions 页面手动运行同一个流程只构建、不发版，安装包在构建产物里，用来发版前试装。
 - 语法检查：`PY -m compileall -q app.py core tests`
-- 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`
+- 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`
 - 字错率：`PY tests/cer.py 参考稿_VID_1001.txt 结果.srt [job.json ...] [-v]`
 - 需要本机模型的检查（不进 CI）：
   - `PY tests/e2e.py 音频 zh 1`：真模型加本地假 DeepSeek 跑完整流程（`DIARIZE=1` 开启说话人区分，`BACKUPS='{"zh": ["mimo", "whisper"]}'` 指定备用模型）；
@@ -49,6 +49,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 ## 架构要点
 - **切块**：Qwen 常漏掉块开头的话，所以每块从切点前 3 秒开始，但只保留切点之后的字（按字级时间戳判断归属），全文拼好以后再统一断句。切点放在目标长度附近最安静的 300 毫秒。
 - **多份结果**：开启精度优化时，每句有好几份文字：`qwen`（主结果）、`qwen2`（换了切点再识别一遍，带术语提示）、`moss`，以及每个启用的备用模型各一个字段（`mimo` / `whisper` / `parakeet`）。DeepSeek 按多数一致来纠错。审阅页会把这几份结果都列出来给用户对照。
+- **Qwen 漏掉的段落**：其他模型（Qwen 复核、备用模型、MOSS）的文字按句切分时，对不上任何 Qwen 句子的部分不丢，按字数估个时间，校对完插到前后两句之间，Qwen 一栏为空、标成存疑，默认采用几份写法里一致最多的那份（`sentences.place_extras`）。不让模型重听，多出来的由用户删。前后两句空隙不到 0.5 秒、少于 2 个有效字或只有语气词的不插。
 - **DeepSeek 的输出不直接信任**：结构不合法的条目（编号不相邻、跨说话人合并、删掉有内容的句子）会打回重写一次，还不行就丢掉；内容和各份识别结果对不上的条目不丢，而是标成存疑并写明原因，交给用户选。
 - **大纲放在备用模型之后**：大纲的输入除了 Qwen 的文字，还附上备用模型和 MOSS 写法不同的地方，便于认出专有名词；找到的词作为提示交给 Qwen 复核。
 - **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。

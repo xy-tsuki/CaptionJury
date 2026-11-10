@@ -36,6 +36,7 @@ jobs:
           python tests/deepseek_unit.py
           python tests/backups_unit.py
           python tests/download_unit.py
+          python tests/extras_unit.py
 
       - name: 准备 Inno Setup 6.5 以上
         shell: pwsh
