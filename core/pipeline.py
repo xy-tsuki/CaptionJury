@@ -175,9 +175,9 @@ class Queue:
         for seg_lang in [x for x in ("zh", "ja") if lang in (x, "mix")]:
             for name in models.backups_for(cfg, seg_lang):
                 serves.setdefault(name, []).append(seg_lang)
-        if opt:
-            keys.append("qwen2")
+        if opt:  # 顺序：备用模型 → DeepSeek 大纲 → Qwen 复核（带大纲里的术语）→ DeepSeek 校对
             keys += [name for name in models.BACKUPS if name in serves]
+            keys.append("qwen2")
             keys.append("deepseek")
         self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
         for lane in self.state["current"]["lanes"]:
@@ -203,9 +203,7 @@ class Queue:
         store.save_job(job)
 
         if opt:
-            terms = self._outline(cfg, job)
-            self._second_pass(cfg, d, asr_lang, segs, terms)
-            # Each backup model hears, in groups of whole sentences, the sentences of the languages it was picked for.
+            # 每个备用模型按整句分组，只听用户为它勾选的语言的句子
             plans = {}
             for name, langs in serves.items():
                 gs = sentences.groups(segs, langs[0] if len(langs) == 1 else None)
@@ -219,6 +217,10 @@ class Queue:
                 res, _ = self._asr(cfg, name, d, gslices, langs[0] if len(langs) == 1 else "auto")
                 for i, g in enumerate(gs):
                     sentences.attach_backup(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), langs, name)
+            store.save_job(job)
+            # 大纲参考全部备用结果，找出的专有名词作为提示交给 Qwen 复核
+            terms = self._outline(cfg, job)
+            self._second_pass(cfg, d, asr_lang, segs, terms)
         store.save_job(job)
         if opt:
             self._proofread(cfg, job)
@@ -427,7 +429,7 @@ class Queue:
         return key
 
     def _outline(self, cfg, job):
-        """DeepSeek's scene outline, saved on the job; returns the proper nouns it found, to hint Qwen's second pass."""
+        """DeepSeek 写全文大纲，存进任务；返回找到的专有名词，作为 Qwen 复核的提示。"""
         segs = [s for s in job["segments"] if s["qwen"]]
         t = self.tracker
         key = self._key()
@@ -435,10 +437,10 @@ class Queue:
         t.creep("deepseek", 40, t.predicted("deepseek") * 0.4, "生成大纲")
         try:
             job["outline"], terms = deepseek.outline(cfg, key, segs)
-        except Exception as e:  # subtitles stay usable; the review page shows them as drafts
+        except Exception as e:  # 字幕照样能用，审阅页当作草稿显示
             self._check()
             job["outline"] = None
-            job["warnings"].append("DeepSeek 校对失败，已保留 Qwen 的识别结果：" + str(e)[:200])
+            job["warnings"].append("DeepSeek 生成大纲失败，没有做校对，已保留 Qwen 的识别结果：" + str(e)[:200])
             t.finish("deepseek", "失败", learn=False)
             return []
         self._check()
@@ -447,7 +449,7 @@ class Queue:
         return terms
 
     def _second_pass(self, cfg, d, lang, segs, terms):
-        """Qwen hears everything again with its cuts moved half a chunk and the outline's names as a hint."""
+        """Qwen 把全文再听一遍：切点挪半个块，并带上大纲里的专有名词作为提示。"""
         made = chunks.make(d / "audio.wav", self.vad_raw, chunks.TARGET / 2)
         slices2 = [(c["t0_cs"] / 100, c["t1_cs"] / 100, c) for c in made]
         self.tracker.set_audio("qwen2", sum(b - a for a, b, _ in slices2))

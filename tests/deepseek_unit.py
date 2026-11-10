@@ -74,4 +74,8 @@ calls.clear()
 items, dropped = deepseek._proof_batch(None, {}, {"outline": "", "glossary": []}, segs, 2, 4)
 assert [r["id"] for r in calls[0][0]["context_before"]] == [7, 8]
 assert [it["ids"] for it in items] == [[10]] and dropped == 0  # 7 and 8 are context here: refused, then redone
+# 大纲输入：其他模型写法和 Qwen 一样（忽略标点）时只发 Qwen 的文字；不一样时附上，重复的写法只留一份
+assert deepseek._outline_row({"qwen": "去浅草寺。", "whisper": "去浅草寺", "mimo": ""}) == "去浅草寺。"
+row = deepseek._outline_row({"qwen": "去浅草四。", "whisper": "去浅草寺", "mimo": "去浅草寺。", "moss": "去浅草"})
+assert row == {"primary": "去浅草四。", "others": {"MiMo": "去浅草寺。", "MOSS": "去浅草"}}, row
 print("all passed")

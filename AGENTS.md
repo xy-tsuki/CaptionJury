@@ -17,7 +17,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - `app.py`：程序入口。启动本机 HTTP 服务和 WebView2 窗口，`Api` 类是前端可调用的全部接口。
 - `core/version.py`：版本号。发版时改这里，tag 必须是 `v` 加这个版本号。
 - `packaging/`：打包和安装包。`build.ps1` 是唯一的构建入口（本机和 CI 共用）；`tingxie.spec` 是 PyInstaller 配置；`installer.iss` 是 Inno Setup 安装包脚本；`collect_licenses.py` 收集第三方许可证；`make_icon.py` 生成 `icon.ico`；`release-notes.md` 是 Release 说明模板。
-- `core/pipeline.py`：任务队列和整条流水线（抽音频 → 检测人声 → 切块 → MOSS → Qwen → 断句 → 大纲 → Qwen 复核 → 备用模型 → DeepSeek 校对 → 写字幕），也负责调用 crispasr.exe。
+- `core/pipeline.py`：任务队列和整条流水线（抽音频 → 检测人声 → 切块 → MOSS → Qwen → 断句 → 备用模型 → DeepSeek 大纲 → Qwen 复核 → DeepSeek 校对 → 写字幕），也负责调用 crispasr.exe。
 - `core/models.py`：模型清单。每个模型的用途、所需文件（含 Hugging Face 仓库、大小、SHA-256）、默认路径、下载来源、CrispASR 参数，以及每种语言用哪些备用模型。加新模型从这里开始。
 - `core/download.py`：模型和运行库下载器。断点续传、SHA-256 校验、失败自动换源；GitHub 备份里超过 2 GB 的文件分卷下载；运行库 zip 下完后解压到数据目录。
 - `core/chunks.py`：把音频切成约 30 秒、长度均匀的块，前后重叠，每块只"拥有"切点之后的部分。
@@ -50,6 +50,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **切块**：Qwen 常漏掉块开头的话，所以每块从切点前 3 秒开始，但只保留切点之后的字（按字级时间戳判断归属），全文拼好以后再统一断句。切点放在目标长度附近最安静的 300 毫秒。
 - **多份结果**：开启精度优化时，每句有好几份文字：`qwen`（主结果）、`qwen2`（换了切点再识别一遍，带术语提示）、`moss`，以及每个启用的备用模型各一个字段（`mimo` / `whisper` / `parakeet`）。DeepSeek 按多数一致来纠错。审阅页会把这几份结果都列出来给用户对照。
 - **DeepSeek 的输出不直接信任**：结构不合法的条目（编号不相邻、跨说话人合并、删掉有内容的句子）会打回重写一次，还不行就丢掉；内容和各份识别结果对不上的条目不丢，而是标成存疑并写明原因，交给用户选。
+- **大纲放在备用模型之后**：大纲的输入除了 Qwen 的文字，还附上备用模型和 MOSS 写法不同的地方，便于认出专有名词；找到的词作为提示交给 Qwen 复核。
 - **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。
 - **模型下载**：每个文件有三个来源：Hugging Face 原始仓库、hf-mirror（中国大陆镜像）、本项目 GitHub Release（发布附件）备份 `models-v1`。先下到 `.part`，大小和 SHA-256 都对上才改名成正式文件，所以半截文件不会被当成已安装。
 - **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\Tingxie`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。

@@ -17,6 +17,7 @@ NOVEL_MAX = 0.2  # share of new characters no transcript has before an edit is m
 SIMILAR_MIN = 0.5  # an edit this unlike every transcript is marked as doubtful
 
 OUTLINE_SYSTEM = """你是字幕校对的助手。输入是一段中日双语音视频的完整语音识别稿。语音识别只听声音，常把词写成读音相近的别字，所以稿中的专有名词和不通顺的地方都不可靠。
+transcript 按顺序每项一句：是字符串时，就是主识别模型 Qwen3-ASR 的结果（其他模型和它一致或没有结果）；是对象时，primary 是 Qwen3-ASR 的结果，others 是其他模型听到的不同写法，键是模型名（MiMo 只懂中文，Parakeet 只懂日语，Whisper 中日都能听但偶尔会写出没说过的句子，MOSS 整体较弱但能听到轻声）。几份写法对照着看，更容易认出专有名词的正确写法。
 通读全文，先判断场景：在哪里、在做什么、有哪些人、在聊什么。然后整理后续校对要用的大纲：
 1. 场景和主题，各部分内容。
 2. 人名、地名、地标、机构、品牌、型号、作品名、专业术语的正确写法。结合场景和读音推断，例如在某地旅行时，读音相近的词很可能是当地的知名地点。
@@ -144,9 +145,19 @@ def glossary(cfg):
 def outline(cfg, key, segments):
     """Returns (outline, terms): the scene summary for proofreading, and proper nouns to hint the second ASR pass."""
     with _client(cfg, key) as client:
-        reply, _ = _retry(lambda: _ask(client, cfg, OUTLINE_SYSTEM, {"glossary": glossary(cfg), "transcript": [s["qwen"] for s in segments]}))
+        reply, _ = _retry(lambda: _ask(client, cfg, OUTLINE_SYSTEM, {"glossary": glossary(cfg), "transcript": [_outline_row(s) for s in segments]}))
     terms = [str(t).strip() for t in reply.get("terms") or [] if str(t).strip()]
     return str(reply["outline"]), terms[:MAX_TERMS]
+
+
+def _outline_row(s):
+    """大纲输入的一句：只有 Qwen 的文字；其他模型写法不同时，附上这些不同的写法。"""
+    others = {}
+    for k in models.BACKUPS + ("moss",):
+        t = s.get(k)
+        if t and _plain(t) != _plain(s["qwen"]) and _plain(t) not in {_plain(v) for v in others.values()}:
+            others["MOSS" if k == "moss" else models.MODELS[k]["short"]] = t
+    return {"primary": s["qwen"], "others": others} if others else s["qwen"]
 
 
 SOURCES = (("qwen2", "primary2"), ("moss", "moss"))
