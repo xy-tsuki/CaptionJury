@@ -32,14 +32,35 @@ def is_filler(text):
     return bool(core) and (core in FILLER_WORDS or (len(core) <= 3 and all(c in FILLERS for c in core)))
 
 
+COLLAPSED = 3  # 连续这么多个长度为 0、时间相同的词，是对齐失败堆在一处的，当作没有时间
+CHAR_STEP = 0.2  # 没有时间的字按每字这么多秒排在有时间的字旁边
+
+
+def _collapsed(words):
+    """对齐模型对不上音频时（比如 Qwen 漏听了一段），会把一串字的时间都堆在同一点上（常是块的开头）。返回这些词的序号。"""
+    bad, run = set(), []
+    for k, w in enumerate(words + [None]):
+        if w is not None and w.get("t1", -1) == w.get("t0", -1) and run and words[run[-1]]["t0"] == w["t0"]:
+            run.append(k)
+            continue
+        if len(run) >= COLLAPSED:
+            bad.update(run)
+        run = [k] if w is not None and w.get("t1", -1) == w.get("t0", -1) else []
+    return bad
+
+
 def char_times(text, words):
     """Returns (start, end) per character of text; None where a character has no aligned time."""
     timed = []
-    for w in words:
+    bad = _collapsed(words)
+    for k, w in enumerate(words):
         if w.get("t0", -1) < 0 or w.get("t1", -1) < 0:
             continue
         chars = [c for c in w["text"] if not c.isspace()]
         for n, c in enumerate(chars):
+            if k in bad:  # 留着占位，字和词才对得上，只是没有时间
+                timed.append((c, None))
+                continue
             t0, t1 = w["t0"] / 100, w["t1"] / 100
             step = (t1 - t0) / len(chars)
             timed.append((c, t0 + n * step, t0 + (n + 1) * step))
@@ -50,7 +71,7 @@ def char_times(text, words):
         while k < len(timed) and k < j + 8 and timed[k][0] != c:
             k += 1
         if k < len(timed) and timed[k][0] == c:
-            times[i] = timed[k][1:]
+            times[i] = timed[k][1:] if timed[k][1] is not None else None
             j = k + 1
     return times
 
@@ -157,9 +178,14 @@ def split(text, times, who=None):
     return _cut_speakers(merged, who) if who else merged
 
 
-def _span_time(times, a, b):
-    known = [t for t in times[a:b] if t]
-    return (known[0][0], known[-1][1]) if known else None
+def _span_time(text, times, est, a, b):
+    """一句的起止时间：取第一个和最后一个有效字的时间，没有对齐时间的字用估算的时间。"""
+    spoken = [k for k in range(a, b) if text[k] not in SKIP and not text[k].isspace()] or list(range(a, b))
+    i, j = spoken[0], spoken[-1]
+    start = times[i][0] if times[i] else est[i]
+    nxt = est[b] if b < len(est) else float("inf")  # 估算的时间不越过下一句的第一个字
+    end = times[j][1] if times[j] else min(est[j] + CHAR_STEP, nxt)
+    return start, max(end, min(start + 0.3, nxt))
 
 
 def finalize(segs):
@@ -191,9 +217,18 @@ def _fill_speakers(segs):
 def _estimate(text, times, c0, c1):
     """A time for every character: its aligned time, else shared out between its timed neighbours; punctuation goes with the character before it."""
     n = len(text)
-    marks = [(-1, c0)] + [(i, (t[0] + t[1]) / 2) for i, t in enumerate(times) if t] + [(n, c1)]
+    marks = [(i, (t[0] + t[1]) / 2) for i, t in enumerate(times) if t]
+    # 块开头和结尾没有时间的字，紧挨着最近一个有时间的字、按正常语速排，而不是摊满整段（中间可能是没识别出的话或静音）
+    if marks:
+        lead = _spoken(text[:marks[0][0]])
+        tail = _spoken(text[marks[-1][0] + 1:])
+        c0 = max(c0, marks[0][1] - (lead + 1) * CHAR_STEP)
+        c1 = min(c1, marks[-1][1] + (tail + 1) * CHAR_STEP)
+    marks = [(-1, c0)] + marks + [(n, c1)]
     est = [0.0] * n
     for (i, x), (j, y) in zip(marks, marks[1:]):
+        if 0 <= i and j < n:  # 中间空得远超正常语速时（中间是静音或没识别出的话），紧跟在前一个字后面排
+            y = min(y, x + 2 * (j - i) * CHAR_STEP)
         for k in range(i + 1, j):
             est[k] = x + (y - x) * (k - i) / (j - i)
         if 0 <= i < n:
@@ -256,7 +291,7 @@ def build(stream, lang):
         sentence = raw.strip()
         if not sentence or is_filler(sentence):
             continue
-        t = _span_time(times, a, b) or (est[a], max(est[b - 1], est[a] + 0.3))
+        t = _span_time(text, times, est, a, b)
         lead = len(raw) - len(raw.lstrip())
         seg_lang = lang if lang != "mix" else ("ja" if KANA.search(sentence) else "zh")
         segs.append({

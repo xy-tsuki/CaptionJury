@@ -198,6 +198,11 @@ class Queue:
         segs = sentences.build(sentences.stitch(slices, qwen, words, who), lang)
         if not any(words.values()):
             job["warnings"].append("没有拿到逐字时间，字幕时间是按字数估算的")
+        else:
+            lost = [slices[i][:2] for i in sorted(words) if sentences._collapsed(words[i])]
+            if lost:
+                where = "、".join(f"{int(x // 60)}:{int(x % 60):02d}–{int(y // 60)}:{int(y % 60):02d}" for x, y in lost)
+                job["warnings"].append(f"{where} 有一段对不上逐字时间（常见于 Qwen 漏听了一段），那里的字幕时间是按字数估算的，请检查")
         job["segments"] = segs
         if turns:
             self._attach_moss(slices, turns[0], segs)
