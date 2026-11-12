@@ -131,7 +131,6 @@ assert "response_format" in chat.drop and chat.max_tokens == 16384 and len(seen)
 seen.clear()
 chat.ask("s", {"a": 1})
 assert len(seen) == 1  # 第二次直接用学到的参数
-print("all passed")
 
 # 文件名交给大纲和校对：两边的输入里都有 title
 class TitleChat(FakeChat):
@@ -144,3 +143,20 @@ calls.clear()
 deepseek.outline({}, TitleChat(), segs, "【神楽めあ】葬礼")
 deepseek.proofread({}, TitleChat(), segs, "大纲", "【神楽めあ】葬礼")
 assert all(c[0]["title"] == "【神楽めあ】葬礼" for c in calls) and len(calls) >= 2, calls
+
+# 词库：整理粘贴或导入的词表，去掉编号、符号、标题和重复
+assert deepseek.clean_terms("人物：\n1. 神楽めあ\n- 懲役太郎\n* \"香典\"\n神楽めあ\n```\n\n生前葬") == ["神楽めあ", "懲役太郎", "香典", "生前葬"]
+# 生成词库的提示词：接口方式要 JSON，Agent 方式要纯词表，都带上用户填的信息和文件名
+system, payload = deepseek.terms_prompt({"topic": "葬礼杂谈", "people": "神楽めあ", "files": ["a【神楽めあ】.mp4"]})
+assert "JSON" in system and payload["涉及的人物和团体"] == "神楽めあ" and payload["files"] == ["a【神楽めあ】.mp4"]
+text = deepseek.terms_prompt({"topic": "葬礼杂谈"}, agent=True)
+assert isinstance(text, str) and "每行一个词" in text and "葬礼杂谈" in text
+
+
+class TermsChat(FakeChat):
+    def ask(self, system, payload, history=()):
+        return {"terms": ["神楽めあ", " 香典 ", "神楽めあ", ""]}, "{}"
+
+
+assert deepseek.make_terms(TermsChat(), {"topic": "x"}) == ["神楽めあ", "香典"]
+print("all passed")

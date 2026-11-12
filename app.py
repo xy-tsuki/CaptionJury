@@ -111,7 +111,7 @@ class Api:
         return out
 
     # ---------- queue ----------
-    def start(self, paths, lang, opt, formats, diarize=False, compare=False):
+    def start(self, paths, lang, opt, formats, diarize=False, compare=False, terms=""):
         cfg = store.load_config()
         if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
@@ -119,10 +119,57 @@ class Api:
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
         store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize})
         try:
-            self._queue.start(paths, lang, opt, formats, diarize, compare)
+            self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms))
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
+
+    # ---------- 词库：导入、保存、AI 生成 ----------
+    def import_terms(self):
+        """选一个或多个词库文件，按选择顺序首尾相连，返回 {"text", "files"}；取消返回 None。"""
+        res = self._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=True, file_types=("词库文件 (*.txt)", "所有文件 (*.*)"))
+        if not res:
+            return None
+        parts = []
+        for p in res:
+            raw = Path(p).read_bytes()
+            for enc in ("utf-8-sig", "gbk"):  # 记事本旧版存的可能是 GBK
+                try:
+                    parts.append("\n".join(raw.decode(enc).splitlines()).strip())  # 统一成 \n 换行
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                return {"error": f"{Path(p).name} 不是文本文件，或者编码认不出来"}
+        return {"text": "\n".join(x for x in parts if x), "files": [Path(p).name for p in res]}
+
+    def save_terms(self, text):
+        """把词库存成 txt（UTF-8，每行一个词），返回保存的路径；取消返回 None。"""
+        res = self._window.create_file_dialog(webview.SAVE_DIALOG, save_filename="词库.txt", file_types=("词库文件 (*.txt)",))
+        if not res:
+            return None
+        path = res if isinstance(res, str) else res[0]
+        if not path.lower().endswith(".txt"):
+            path += ".txt"
+        Path(path).write_text("\n".join(deepseek.clean_terms(text)) + "\n", encoding="utf-8")
+        return {"path": path}
+
+    # ---------- 生成词库 ----------
+    def terms_prompt(self, info):
+        """复制给订阅制 Agent 的生成词库提示词。"""
+        return deepseek.terms_prompt(info, agent=True)
+
+    def make_terms(self, info):
+        """用设置里的校对接口生成词库。"""
+        cfg = store.load_config()
+        key = store.get_key()
+        if not key:
+            return {"error": f"还没有保存 {deepseek.PROVIDERS.get(cfg.get('proof_provider'), ('校对 AI',))[0]} 的密钥，请先在设置里填写，或者复制提示词给 Agent"}
+        try:
+            with deepseek.Chat(cfg, key, 180) as chat:
+                return {"terms": deepseek.make_terms(chat, info)}
+        except Exception as e:
+            return {"error": str(e)[:200]}
 
     # ---------- 订阅制 Agent：复制提示词、粘贴回复 ----------
     def agent_prompt(self):

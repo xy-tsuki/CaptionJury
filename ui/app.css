@@ -144,6 +144,17 @@ mark:empty{display:none}
 .fmt{height:32px;min-width:58px;padding:0 10px;border:1px solid var(--line2);background:transparent;cursor:pointer;font-size:12px;transition:background .16s,color .16s}
 .fmt:hover{background:var(--sunk)}
 .fmt.on{background:var(--ink);color:var(--inkfg);border-color:var(--ink)}
+.terms{font-size:13px;min-height:84px}
+.t-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.t-bar .btn{height:32px;font-size:13px}
+.t-page{flex:1;overflow:auto;padding:16px max(28px,calc(50% - 420px)) 48px}
+.t-head{margin-bottom:8px}
+.t-main{display:flex;flex-direction:column;gap:18px}
+.t-main h1{font-size:22px;font-weight:600;margin-bottom:6px}
+.t-ways{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:6px}
+.t-way{border:1px solid var(--line);background:var(--panel);padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.t-way h3{font-size:15px;font-weight:600}
+.t-way p{font-size:13px;line-height:1.7}
 .m-go{flex:none;padding:16px 28px 22px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
 .m-go .btn{height:48px;font-size:15px}
 .m-go .faint{font-size:12px}

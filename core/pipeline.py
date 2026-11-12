@@ -122,7 +122,7 @@ class Queue:
         return now - self.paused_for - ((now - self.paused_at) if self.paused_at else 0)
 
     # ---------- control ----------
-    def start(self, files, lang, opt, formats, diarize=False, compare=False):
+    def start(self, files, lang, opt, formats, diarize=False, compare=False, terms=()):
         if self.state["running"]:
             raise RuntimeError("已有任务正在运行")
         self.cancel = False
@@ -132,7 +132,7 @@ class Queue:
             "running": True, "error": None, "finished": None, "current": None,
             "queue": [Path(f).name for f in files], "index": 0, "total": len(files), "done": [], "queue_pct": 0,
         }
-        self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize, compare), daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize, compare, list(terms)), daemon=True)
         self.thread.start()
 
     def set_paused(self, paused):
@@ -162,7 +162,7 @@ class Queue:
             raise Cancelled()
 
     # ---------- queue ----------
-    def _run(self, files, lang, opt, formats, diarize, compare):
+    def _run(self, files, lang, opt, formats, diarize, compare, terms=()):
         ticker = threading.Thread(target=self._ticker, daemon=True)
         ticker.start()
         try:
@@ -170,7 +170,7 @@ class Queue:
             self.durations = [_duration(cfg, f) or 1.0 for f in files]
             for i, f in enumerate(files):
                 self.state["index"] = i
-                job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare)
+                job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare, terms)
                 self.state["done"].append(job["id"])
             self.state["queue_pct"] = 100
             self.state["finished"] = self.state["done"][-1] if self.state["done"] else None
@@ -193,13 +193,15 @@ class Queue:
             time.sleep(0.25)
 
     # ---------- one file ----------
-    def _one(self, source, lang, opt, formats, duration, diarize, compare=False):
+    def _one(self, source, lang, opt, formats, duration, diarize, compare=False, terms=()):
         cfg = store.load_config()
+        # 新建页的词库只对这次转写生效：并进设置里的术语表，Qwen 提示和校对都用它
+        cfg["glossary"] = "\n".join(dict.fromkeys(deepseek.glossary(cfg) + list(terms)))
         jid, d = store.new_job_dir()
         src = Path(source)
         job = {
             "id": jid, "source": str(src), "name": src.name, "created": time.time(),
-            "lang": lang, "opt": opt, "compare": compare, "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
+            "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
         }
         self.state["current"] = {"id": jid, "name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]

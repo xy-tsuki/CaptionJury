@@ -20,7 +20,7 @@ const I = {
   lock: svg('<rect x="3" y="7" width="10" height="6.5"/><path d="M5.2 7V5a2.8 2.8 0 015.6 0v2"/>'),
 };
 
-const S = { cfg: null, files: [], lang: 'mix', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
+const S = { cfg: null, terms: '', tf: { topic: '', field: '', people: '', files: true }, files: [], lang: 'mix', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
 const api = () => window.pywebview.api;
 const FORMATS = ['SRT', 'ASS', 'VTT', 'TXT'];
 const LANGS = { zh: '中文', ja: '日语', mix: '中文 + 日语' };
@@ -167,6 +167,10 @@ function renderNew() {
           </div>
         </div>
         <div class="m-sec"><span class="lbl">字幕格式</span><div class="fmts" role="group" aria-label="字幕格式">${fmts}</div><span class="faint small">保存在源文件所在的文件夹。</span></div>
+        <div class="m-sec"><label class="lbl" for="terms">词库导入</label>
+          <textarea class="field terms" id="terms" rows="4" placeholder="每行一个词：人名、团体、作品名、梗……&#10;只对这次转写生效，设置里的术语表照常使用。">${esc(S.terms)}</textarea>
+          <div class="t-bar"><button class="btn" type="button" id="tgen">AI 生成词库</button><button class="btn" type="button" id="timp">导入词库</button><button class="btn" type="button" id="tsave">保存词库</button><span class="faint small" id="tcount">${termCount()}</span></div>
+        </div>
       </div>
       <div class="m-go">
         ${running
@@ -190,6 +194,7 @@ function renderNew() {
   $$('[data-rm]').forEach((b) => { b.onclick = () => { S.files.splice(+b.dataset.rm, 1); renderNew(); }; });
   $('#pick').onclick = async () => { addFiles(await api().pick_files()); };
   if ($('#go')) $('#go').onclick = start;
+  bindTerms();
   const drop = $('#drop');
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
@@ -205,10 +210,103 @@ function addFiles(list) {
 async function start() {
   if (!S.files.length) return toast('请先添加文件');
   if (!S.formats.length) return toast('请至少选择一种字幕格式');
-  const r = await api().start(S.files.map((f) => f.path), S.lang, S.opt, S.formats, S.dia, S.compare);
+  const r = await api().start(S.files.map((f) => f.path), S.lang, S.opt, S.formats, S.dia, S.compare, S.terms);
   if (r.error) return toast(r.error);
   S.files = [];
   location.hash = '#progress';
+}
+
+/* ---------- 词库 ---------- */
+const termLines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean);
+const termCount = () => { const n = new Set(termLines(S.terms)).size; return n ? `${n} 个词` : '可以留空'; };
+
+/* 往词库框后面接上新的词，重复的不再加 */
+function addTerms(text) {
+  const have = termLines(S.terms);
+  const add = termLines(text).filter((t) => !have.includes(t));
+  S.terms = [...have, ...add].join('\n');
+  return add.length;
+}
+
+function bindTerms() {
+  const box = $('#terms');
+  box.oninput = () => { S.terms = box.value; $('#tcount').textContent = termCount(); };
+  $('#tgen').onclick = () => { location.hash = '#terms'; };
+  $('#timp').onclick = async () => {
+    const r = await api().import_terms();
+    if (!r) return;
+    if (r.error) return toast(r.error);
+    const n = addTerms(r.text);
+    renderNew();
+    toast(`导入了 ${r.files.length} 个文件，新增 ${n} 个词`);
+  };
+  $('#tsave').onclick = async () => {
+    if (!termLines(S.terms).length) return toast('词库是空的');
+    const r = await api().save_terms(S.terms);
+    if (r) toast('词库已保存：' + r.path);
+  };
+}
+
+/* AI 生成词库：二级页面，从新建页进入 */
+function termInfo() {
+  return { topic: S.tf.topic, field: S.tf.field, people: S.tf.people, files: S.tf.files ? S.files.map((f) => f.name) : [] };
+}
+
+function renderTerms() {
+  const f = S.tf;
+  const hasKey = S.cfg && S.cfg.has_key;
+  const names = S.files.map((x) => x.name);
+  view.innerHTML = `
+  <main class="t-page">
+    <div class="t-head"><a class="btn ghost" href="#new">← 返回新建</a></div>
+    <div class="t-main">
+      <div><h1>AI 生成词库</h1><p class="desc">说说视频讲什么、有谁出场，AI 会列出可能说到的人名、团体、作品名和圈内用语，填进新建页的词库。写得越具体，词越准；拿不准的地方留空就行。</p></div>
+      <label class="lab"><span>视频主题和大致内容</span><textarea class="field" data-tf="topic" rows="4" placeholder="例如：VTuber 杂谈直播的切片，聊自己的葬礼想怎么办">${esc(f.topic)}</textarea></label>
+      <label class="lab"><span>涉及的领域</span><input class="field" data-tf="field" value="${esc(f.field)}" placeholder="例如：VTuber、日本丧葬习俗"></label>
+      <label class="lab"><span>涉及的人物和团体</span><textarea class="field" data-tf="people" rows="3" placeholder="例如：主播名、提到的其他主播、所属事务所">${esc(f.people)}</textarea></label>
+      ${names.length ? `<label class="check"><input type="checkbox" id="tffiles" ${f.files ? 'checked' : ''}><span>附上新建页的文件名（${names.length} 个），文件名里常有主播名和作品名</span></label>` : ''}
+      <div class="t-ways">
+        <section class="t-way">
+          <h3>用 ${esc(agentMode() ? '设置里的服务商接口' : proofName())} 生成</h3>
+          <p class="dim">生成完自动回到新建页，词接在词库框后面。只发送上面填的文字和文件名。</p>
+          ${hasKey ? '' : '<p class="warn">还没有保存服务商的密钥。到设置里填写，或者用复制给 Agent 的方式。</p>'}
+          <div class="ag-bar"><button class="btn solid" type="button" id="tfapi" ${hasKey ? '' : 'disabled'}>生成词库</button><span class="faint small" id="tfst"></span></div>
+        </section>
+        <section class="t-way">
+          <h3>复制给 Agent</h3>
+          <p class="dim">把提示词复制给你的 Agent（Claude、ChatGPT、Gemini 等）。它回复词表以后，复制回新建页的词库框，每行一个词。</p>
+          <div class="ag-bar"><button class="btn" type="button" id="tfcopy">复制提示词</button><a class="btn ghost" href="#new">回新建页粘贴</a></div>
+          <textarea class="field mono ag-prompt" id="tfprompt" readonly rows="6" aria-label="提示词" hidden></textarea>
+        </section>
+      </div>
+    </div>
+  </main>`;
+  $$('[data-tf]').forEach((el) => { el.oninput = () => { S.tf[el.dataset.tf] = el.value; }; });
+  if ($('#tffiles')) $('#tffiles').onchange = (e) => { S.tf.files = e.target.checked; };
+  const empty = () => !(f.topic.trim() || f.field.trim() || f.people.trim() || (f.files && names.length));
+  $('#tfcopy').onclick = async () => {
+    if (empty()) return toast('先填一点视频的信息');
+    const text = await api().terms_prompt(termInfo());
+    const area = $('#tfprompt');
+    area.hidden = false;
+    area.value = text;
+    toast(await copyText(text, area) ? '已复制提示词' : '复制失败，请在框里全选后手动复制');
+  };
+  $('#tfapi').onclick = async (e) => {
+    if (empty()) return toast('先填一点视频的信息');
+    const btn = e.currentTarget;
+    btn.classList.add('busy');
+    btn.disabled = true;
+    $('#tfst').textContent = '正在生成，通常要十几秒…';
+    const r = await api().make_terms(termInfo());
+    btn.classList.remove('busy');
+    btn.disabled = false;
+    if (r.error) { $('#tfst').textContent = ''; return toast(r.error); }
+    if (!r.terms.length) { $('#tfst').textContent = 'AI 没有给出词，换个说法再试试。'; return; }
+    const n = addTerms(r.terms.join('\n'));
+    if (location.hash === '#terms') location.hash = '#new';
+    toast(`AI 生成了 ${r.terms.length} 个词，新增 ${n} 个，已填进词库`);
+  };
 }
 
 /* ---------- 进度 ---------- */
@@ -878,12 +976,14 @@ async function watchSetup() {
 /* ---------- 外壳 ---------- */
 function route() {
   const v = (location.hash || '#new').slice(1);
-  $$('.nav a').forEach((a) => { const on = a.dataset.v === v; a.classList.toggle('cur', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  const nv = v === 'terms' ? 'new' : v;  // 生成词库页属于新建
+  $$('.nav a').forEach((a) => { const on = a.dataset.v === nv; a.classList.toggle('cur', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   if (v === 'progress') renderProgress();
   else if (v === 'review') renderReview();
   else if (v === 'history') renderHistory();
   else if (v === 'settings') renderSettings();
   else if (v === 'setup') renderSetup();
+  else if (v === 'terms') renderTerms();
   else renderNew();
 }
 
