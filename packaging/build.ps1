@@ -1,4 +1,4 @@
-﻿﻿<#
+﻿<#
 构建安装包：打包 exe、准备 FFmpeg / WebView2 安装器 / 第三方许可证，再用 Inno Setup 生成安装包。
 本机和 GitHub Actions 都用这个脚本。在仓库根目录运行：
 
