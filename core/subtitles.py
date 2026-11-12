@@ -28,8 +28,15 @@ def _pieces(text):
     return [p.strip() for p in out if p.strip()] or [text]
 
 
-def cues(segments, names=None):
-    """Long segments share their time span in proportion to character count. names maps speaker ids to display names."""
+def plain(text):
+    """去掉标点：句号全部删掉，逗号和日语顿号换成空格。"""
+    text = re.sub(r"[。．]", "", text)
+    text = re.sub(r"[，、,]", " ", text)
+    return re.sub(r" {2,}", " ", text).strip()
+
+
+def cues(segments, names=None, no_punct=False):
+    """长句按字数分摊时间。names 把说话人编号对应到显示名；no_punct 时去掉标点（见 plain）。"""
     result = []
     for s in segments:
         text = s["text"].strip()
@@ -41,7 +48,7 @@ def cues(segments, names=None):
         who = (names or {}).get(s.get("speaker"), "")
         for p in parts:
             end = t + (s["b"] - s["a"]) * len(p) / total
-            result.append((t, end, p, who))
+            result.append((t, end, plain(p) if no_punct else p, who))
             t = end
     return result
 
@@ -118,7 +125,7 @@ def _free_path(path):
 def export(job, formats):
     """写出各格式的字幕，返回写好的路径。优先写在源文件旁边，写不进去就写到 FALLBACK。"""
     src = Path(job["source"])
-    c = cues(job["segments"], job.get("speakers") if job.get("speaker_tags", True) else None)
+    c = cues(job["segments"], job.get("speakers") if job.get("speaker_tags") else None, job.get("no_punct", False))
     known = job.setdefault("exports", {})
     written = []
     for fmt in formats:

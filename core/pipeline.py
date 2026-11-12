@@ -207,7 +207,7 @@ class Queue:
         src = Path(source)
         job = {
             "id": jid, "source": str(src), "name": src.name, "created": time.time(),
-            "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
+            "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": False, "no_punct": False,
         }
         self.state["current"] = {"id": jid, "name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]

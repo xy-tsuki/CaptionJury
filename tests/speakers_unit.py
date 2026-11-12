@@ -70,6 +70,10 @@ assert "[小明] 你好" in subtitles.srt(c) and "\n再见\n" in subtitles.srt(c
 assert "<v 小明>你好" in subtitles.vtt(c) and "小明：你好\n再见\n" == subtitles.txt(c)
 assert "Default,小明,0,0,0,,[小明] 你好" in subtitles.ass(c) and "Default,,0,0,0,,再见" in subtitles.ass(c)
 assert "小明" not in subtitles.srt(subtitles.cues(segs))
+# 去掉标点：句号删掉，逗号和顿号换成空格，其他标点不动
+assert subtitles.plain("今日は、晴れ。そうだね，走吧。好吗？") == "今日は 晴れそうだね 走吧好吗？"
+assert subtitles.cues([{"a": 0, "b": 1, "text": "你好，再见。"}], no_punct=True)[0][2] == "你好 再见"
+assert subtitles.cues([{"a": 0, "b": 1, "text": "你好，再见。"}])[0][2] == "你好，再见。"
 # Quiet speech the detector missed is kept when it stands out from the noise; plain noise between is dropped.
 from core import chunks
 lv = [100] * 300

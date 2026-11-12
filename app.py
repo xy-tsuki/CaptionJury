@@ -325,6 +325,11 @@ class Api:
         j["speaker_tags"] = on
         store.save_job(j)
 
+    def set_no_punct(self, jid, on):
+        j = store.load_job(jid)
+        j["no_punct"] = bool(on)
+        store.save_job(j)
+
     def export(self, jid, formats):
         j = store.load_job(jid)
         try:

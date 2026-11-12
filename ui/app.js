@@ -466,7 +466,7 @@ async function renderReview() {
       <div class="e-bar">
         <select class="pick" id="jobsel" aria-label="切换转写结果">${options}</select>
         <div class="seg small" role="group" aria-label="筛选" id="flt"></div>
-        <div class="sp">${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags === false ? '' : 'checked'}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
+        <div class="sp"><label class="check tags" title="导出的字幕去掉全部句号，逗号和日语顿号改成空格"><input type="checkbox" id="nopunct" ${j.no_punct ? 'checked' : ''}><span>去掉标点</span></label>${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags ? 'checked' : ''}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
       </div>
       <div class="frbar" id="frbar" hidden>
         <input class="field" id="f1" placeholder="查找" aria-label="查找"><input class="field" id="f2" placeholder="替换为" aria-label="替换为"><button class="btn sm" type="button" id="frgo">全部替换</button>
@@ -494,6 +494,7 @@ async function renderReview() {
     if (seg && seg.id !== S.sel && !m.paused) select(seg.id, false);
   };
   $('#jobsel').onchange = async (e) => { await openJob(e.target.value); renderReview(); };
+  $('#nopunct').onchange = async (e) => { j.no_punct = e.target.checked; await api().set_no_punct(j.id, e.target.checked); };
   if ($('#tags')) $('#tags').onchange = async (e) => { j.speaker_tags = e.target.checked; await api().set_speaker_tags(j.id, e.target.checked); };
   $('#fr').onclick = () => { const b = $('#frbar'); b.hidden = !b.hidden; $('#fr').setAttribute('aria-expanded', !b.hidden); if (!b.hidden) $('#f1').focus(); };
   $('#frgo').onclick = async () => {
