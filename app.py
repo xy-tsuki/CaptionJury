@@ -112,8 +112,9 @@ class Api:
 
     # ---------- queue ----------
     def start(self, paths, lang, opt, formats, diarize=False, compare=False):
-        if opt and not store.has_key():
-            return {"error": "AI 精度优化需要 DeepSeek，请先在设置里保存密钥"}
+        cfg = store.load_config()
+        if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
+            return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
         if diarize and not Path(store.load_config()["moss_model"]).exists():
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
         store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize})
@@ -122,6 +123,22 @@ class Api:
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
+
+    # ---------- 订阅制 Agent：复制提示词、粘贴回复 ----------
+    def agent_prompt(self):
+        """正在等用户粘贴时，交给 Agent 的提示词。"""
+        cur = self._queue.state.get("current") or {}
+        a = cur.get("agent")
+        if not a or not self._queue.agent_prompt:
+            return None
+        return {"k": a["k"], "step": a["step"], "prompt": self._queue.agent_prompt}
+
+    def agent_submit(self, step, text):
+        why = self._queue.agent_reply(step, text)
+        return {"error": why} if why else {}
+
+    def agent_skip(self):
+        self._queue.agent_skip()
 
     def pause(self, paused):
         self._queue.set_paused(paused)
@@ -280,6 +297,7 @@ class Api:
     def config(self):
         cfg = store.load_config()
         cfg["has_key"] = store.has_key()
+        cfg["providers"] = [{"key": k, "label": v[0], "url": v[1], "has_key": store.has_key(k)} for k, v in deepseek.PROVIDERS.items()]
         cfg["version"] = VERSION
         cfg["backups_active"] = {lang: [models.MODELS[k]["short"] for k in models.backups_for(cfg, lang)] for lang in ("zh", "ja")}
         return cfg
@@ -287,13 +305,27 @@ class Api:
     def save_config(self, changes):
         store.save_config(changes)
 
+    def set_provider(self, provider):
+        """换校对接口：接口地址换成预置的（自定义的保留原来填的），模型等拉到列表后再选。"""
+        if provider not in deepseek.PROVIDERS:
+            return {"error": "不认识这个接口"}
+        url = deepseek.PROVIDERS[provider][1]
+        changes = {"proof_provider": provider}
+        if url:
+            changes["proof_url"] = url
+        elif store.load_config()["proof_provider"] != "custom":
+            changes["proof_url"] = ""
+        store.save_config(changes)
+        return {}
+
     def set_key(self, key):
         store.set_key(key)
 
     def delete_key(self):
         store.delete_key()
 
-    def test_key(self):
+    def list_models(self):
+        """当前接口能用的模型，给设置页的下拉框。"""
         key = store.get_key()
         if not key:
             return {"error": "还没有保存密钥"}
@@ -301,6 +333,8 @@ class Api:
             return {"models": deepseek.test(store.load_config(), key)}
         except Exception as e:
             return {"error": str(e)[:200]}
+
+    test_key = list_models
 
     def models(self):
         """Every model, with its files and whether they are found, for the settings page."""

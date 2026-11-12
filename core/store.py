@@ -1,4 +1,4 @@
-"""Local settings, DPAPI-encrypted API key, and job files."""
+"""本机设置、经 DPAPI 加密的 API 密钥（每个校对接口一份）和任务文件。"""
 import json
 import os
 import shutil
@@ -13,7 +13,7 @@ from . import models
 HOME = Path(os.environ.get("TINGXIE_HOME") or Path(os.environ["LOCALAPPDATA"]) / "Tingxie")
 JOBS = HOME / "jobs"
 CONFIG = HOME / "config.json"
-KEYFILE = HOME / "deepseek.key"
+KEYFILE = HOME / "deepseek.key"  # DeepSeek 的密钥沿用原来的文件名，其他接口的放在 keys 目录
 MODELS_DIR = HOME / "models"
 RUNTIME_DIR = HOME / "runtime"
 # 安装版自带的 ffmpeg，放在 exe 旁边的 ffmpeg 文件夹里；源码运行时用 PATH 里的 ffmpeg
@@ -26,8 +26,11 @@ DEFAULTS = {
     "ffmpeg": "ffmpeg",
     **models.default_paths(MODELS_DIR),
     "backups": models.DEFAULT_BACKUPS,
-    "deepseek_url": "https://api.deepseek.com",
-    "deepseek_model": "deepseek-flash",
+    # 校对：api 走服务商接口（OpenAI 兼容格式）；agent 把提示词交给用户，复制给订阅制 Agent 再粘贴回来
+    "proof_mode": "api",
+    "proof_provider": "deepseek",
+    "proof_url": "https://api.deepseek.com",
+    "proof_model": "deepseek-flash",
     "glossary": "",
     "lang": "mix",
     "opt": True,
@@ -46,7 +49,12 @@ def load_config():
     _ensure()
     cfg = dict(DEFAULTS)
     if CONFIG.exists():
-        cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+        saved = json.loads(CONFIG.read_text(encoding="utf-8"))
+        # 只支持 DeepSeek 时的旧设置名
+        for old, new in (("deepseek_url", "proof_url"), ("deepseek_model", "proof_model")):
+            if old in saved and new not in saved:
+                saved[new] = saved[old]
+        cfg.update(saved)
     # 去掉已经不支持的备用模型（Parakeet 在 2026-11-12 去掉了）；某种语言只勾了它的，改回默认
     backups = {}
     for lang, names in (cfg.get("backups") or {}).items():
@@ -65,25 +73,36 @@ def save_config(changes):
     return cfg
 
 
-def set_key(key):
-    """Encrypts with Windows DPAPI: only this Windows account can decrypt the file."""
+def key_file(provider=None):
+    """这个校对接口的密钥文件；不写接口时用设置里当前选的那个。"""
+    provider = provider or load_config()["proof_provider"]
+    if not provider.isalnum():
+        raise ValueError("接口名不对")
+    return KEYFILE if provider == "deepseek" else HOME / "keys" / f"{provider}.key"
+
+
+def set_key(key, provider=None):
+    """用 Windows DPAPI 加密：只有当前 Windows 账户能解开这个文件。"""
     _ensure()
-    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "Tingxie DeepSeek key", None, None, None, 0)
-    KEYFILE.write_bytes(blob)
+    f = key_file(provider)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "Tingxie API key", None, None, None, 0)
+    f.write_bytes(blob)
 
 
-def get_key():
-    if not KEYFILE.exists():
+def get_key(provider=None):
+    f = key_file(provider)
+    if not f.exists():
         return None
-    return win32crypt.CryptUnprotectData(KEYFILE.read_bytes(), None, None, None, 0)[1].decode("utf-8")
+    return win32crypt.CryptUnprotectData(f.read_bytes(), None, None, None, 0)[1].decode("utf-8")
 
 
-def has_key():
-    return KEYFILE.exists()
+def has_key(provider=None):
+    return key_file(provider).exists()
 
 
-def delete_key():
-    KEYFILE.unlink(missing_ok=True)
+def delete_key(provider=None):
+    key_file(provider).unlink(missing_ok=True)
 
 
 def new_job_dir():

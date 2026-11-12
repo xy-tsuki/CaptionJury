@@ -1,4 +1,8 @@
-"""DeepSeek proofreading: outlines the whole transcript, then corrects it and its sentence breaks with every transcript in view."""
+"""AI 校对：先写全文大纲，再对照各份识别结果逐句校对文字和断句。
+
+模块名是只支持 DeepSeek 时留下的。现在可以接任何 OpenAI 兼容格式的接口（Chat），
+也可以把提示词交给用户复制给订阅制 Agent、再把回复粘贴回来（流水线里的 _Agent），两种方式共用同一套提示词和校验。
+"""
 import difflib
 import json
 import re
@@ -10,7 +14,7 @@ from . import models, sentences
 
 MAX_OUTPUT_TOKENS = 32768
 MAX_TERMS = 40
-BATCH = 30  # sentences DeepSeek corrects per request
+BATCH = 30  # 走接口时每次请求校对多少句；交给 Agent 时全文一次给完
 CONTEXT = 4  # sentences shown either side of a batch, for reading only
 WORKERS = 4  # requests in flight at once
 NOVEL_MAX = 0.2  # share of new characters no transcript has before an edit is marked as doubtful
@@ -88,45 +92,141 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
  {"ids":[10],"text":"今天去了浅草寺，人好多。\\nそれな、めっちゃ混んでた。","uncertain":false,"reason":""}]}"""
 
 
-def _client(cfg, key, timeout=900):
-    return httpx.Client(
-        base_url=cfg["deepseek_url"].rstrip("/"),
-        headers={"Authorization": f"Bearer {key}"},
-        timeout=timeout,
-    )
+# 预置的校对接口，都按 OpenAI 兼容格式调用（POST /chat/completions，GET /models）
+PROVIDERS = {
+    "deepseek": ("DeepSeek", "https://api.deepseek.com"),
+    "openai": ("OpenAI", "https://api.openai.com/v1"),
+    "qwen": ("阿里云百炼（通义千问）", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    "moonshot": ("Kimi（月之暗面）", "https://api.moonshot.cn/v1"),
+    "zhipu": ("智谱 GLM", "https://open.bigmodel.cn/api/paas/v4"),
+    "siliconflow": ("硅基流动", "https://api.siliconflow.cn/v1"),
+    "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1"),
+    "gemini": ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
+    "anthropic": ("Anthropic Claude", "https://api.anthropic.com/v1"),
+    "custom": ("自定义（OpenAI 兼容）", ""),
+}
+TUNABLE = ("response_format", "temperature", "max_tokens")  # 有的接口不认这些参数，报错时去掉再试
+
+
+def label(cfg):
+    """给用户看的校对方式名称。"""
+    if cfg.get("proof_mode") == "agent":
+        return "Agent"
+    return PROVIDERS.get(cfg.get("proof_provider"), ("校对 AI",))[0]
+
+
+def parse_reply(text):
+    """从模型或 Agent 的回复里取出 JSON 对象：允许前后有说明文字、```json 代码块和 <think> 思考过程。"""
+    text = re.sub(r"<think>.*?</think>", "", str(text or ""), flags=re.S).strip()
+    fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    if fence:
+        text = fence.group(1)
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        a, b = text.find("{"), text.rfind("}")
+        if a < 0 or b <= a:
+            raise ValueError("回复里没有找到 JSON") from None
+        try:
+            reply = json.loads(text[a:b + 1])
+        except ValueError as e:
+            raise ValueError(f"回复里的 JSON 不完整或格式不对：{e}") from None
+    if not isinstance(reply, dict):
+        raise ValueError("回复的 JSON 应该是一个对象 {…}")
+    return reply
+
+
+class Chat:
+    """一个校对接口的连接。同一次任务里记住这个接口不认的参数，后面的请求不再带。"""
+    batch, attempts = BATCH, 2
+
+    def __init__(self, cfg, key, timeout=900):
+        self.cfg, self.name = cfg, label(cfg)
+        url = (cfg.get("proof_url") or PROVIDERS.get(cfg.get("proof_provider"), ("", ""))[1]).rstrip("/")
+        if not url:
+            raise ValueError("还没有填写接口地址")
+        headers = {"Authorization": f"Bearer {key}"}
+        if cfg.get("proof_provider") == "anthropic":
+            headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+        self.client = httpx.Client(base_url=url, headers=headers, timeout=timeout)
+        self.drop, self.max_tokens = set(), MAX_OUTPUT_TOKENS
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.client.close()
+
+    def models(self):
+        r = self.client.get("/models")
+        if r.status_code >= 400:
+            raise ValueError(f"{self.name} 返回 {r.status_code}：{r.text[:200]}")
+        return sorted(str(m["id"]) for m in r.json().get("data", []) if m.get("id"))
+
+    def _post(self, messages):
+        r = None
+        for _ in range(len(TUNABLE) + 2):
+            body = {"model": self.cfg["proof_model"], "messages": messages, "stream": False}
+            if "response_format" not in self.drop:
+                body["response_format"] = {"type": "json_object"}
+            if "temperature" not in self.drop:
+                body["temperature"] = 0.2
+            if "max_tokens" not in self.drop:
+                body["max_tokens"] = self.max_tokens
+            r = self.client.post("/chat/completions", json=body)
+            if r.status_code in (400, 422):
+                low = r.text.lower()
+                hit = next((p for p in TUNABLE if p in low and p not in self.drop), None)
+                if hit == "max_tokens":
+                    most = re.search(r"(?:at most|maximum|<=|up to)\D{0,20}(\d{3,6})", low)
+                    if most and int(most.group(1)) < self.max_tokens:
+                        self.max_tokens = int(most.group(1))
+                        continue
+                    if self.max_tokens > 8192:
+                        self.max_tokens = 8192
+                        continue
+                if hit:
+                    self.drop.add(hit)
+                    continue
+            if r.status_code >= 400:
+                raise ValueError(f"{self.name} 返回 {r.status_code}：{r.text[:300]}")
+            return r.json()["choices"][0]
+        raise ValueError(f"{self.name} 一直拒绝请求：{r.text[:300]}")
+
+    def ask(self, system, payload, history=()):
+        """发一次请求，history 是同一段对话里之前的（回复, 反馈）。返回 (解析出的 JSON, 原文)，出错重试两次。"""
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+        for reply, feedback in history:
+            messages += [{"role": "assistant", "content": reply}, {"role": "user", "content": feedback}]
+
+        def once():
+            choice = self._post(messages)
+            if choice.get("finish_reason") == "length":
+                raise ValueError(f"{self.name} 的输出被截断")
+            text = choice["message"]["content"] or ""
+            return parse_reply(text), text
+        return _retry(once)
 
 
 def test(cfg, key):
-    """Returns the model ids this key can use."""
-    with _client(cfg, key, 20) as c:
-        r = c.get("/models")
-        r.raise_for_status()
-        return [m["id"] for m in r.json().get("data", [])]
+    """返回这个密钥能用的模型。"""
+    with Chat(cfg, key, 20) as c:
+        return c.models()
 
 
-def _ask(client, cfg, system, payload, history=()):
-    """Sends one request; history holds earlier (reply, feedback) turns of the same conversation."""
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
-    for reply, feedback in history:
-        messages += [{"role": "assistant", "content": reply}, {"role": "user", "content": feedback}]
-    r = client.post(
-        "/chat/completions",
-        json={
-            "model": cfg["deepseek_model"],
-            "messages": messages,
-            "response_format": {"type": "json_object"},
-            "max_tokens": MAX_OUTPUT_TOKENS,
-            "temperature": 0.2,
-            "stream": False,
-        },
-    )
-    if r.status_code >= 400:
-        raise ValueError(f"DeepSeek 返回 {r.status_code}：{r.text[:300]}")
-    choice = r.json()["choices"][0]
-    if choice.get("finish_reason") == "length":
-        raise ValueError("DeepSeek 的输出被截断")
-    text = choice["message"]["content"]
-    return json.loads(text), text
+def prompt_text(system, payload):
+    """交给 Agent 的完整提示词：说明加上输入数据，要求只回复 JSON。"""
+    return (system + "\n\n下面是输入数据（JSON）。请按上面的要求处理，只回复一个 JSON 对象，不要写其他文字。\n\n"
+            + json.dumps(payload, ensure_ascii=False))
+
+
+def check_shape(step, reply):
+    """粘贴回来的结果是不是这一步要的格式，不是就返回原因。"""
+    if step == "outline":
+        return None if isinstance(reply.get("outline"), str) else "缺少 outline（大纲正文）。请确认粘贴的是大纲这一步的回复"
+    if not isinstance(reply.get("items"), list):
+        return "缺少 items 列表。请确认粘贴的是校对这一步的回复"
+    return None
 
 
 def _retry(call):
@@ -142,10 +242,9 @@ def glossary(cfg):
     return [g.strip() for g in cfg.get("glossary", "").splitlines() if g.strip()]
 
 
-def outline(cfg, key, segments):
-    """Returns (outline, terms): the scene summary for proofreading, and proper nouns to hint the second ASR pass."""
-    with _client(cfg, key) as client:
-        reply, _ = _retry(lambda: _ask(client, cfg, OUTLINE_SYSTEM, {"glossary": glossary(cfg), "transcript": [_outline_row(s) for s in segments]}))
+def outline(cfg, chat, segments):
+    """返回 (大纲, 术语)：校对用的场景说明，以及交给 Qwen 复核的专有名词。chat 是 Chat 或流水线里的 Agent。"""
+    reply, _ = chat.ask(OUTLINE_SYSTEM, {"glossary": glossary(cfg), "transcript": [_outline_row(s) for s in segments]})
     terms = [str(t).strip() for t in reply.get("terms") or [] if str(t).strip()]
     return str(reply["outline"]), terms[:MAX_TERMS]
 
@@ -241,14 +340,14 @@ def content_doubt(item, group):
     return None
 
 
-def _proof_batch(client, cfg, base, segments, a, b):
+def _proof_batch(chat, base, segments, a, b):
     """Corrects segments[a:b]. Items that cannot be applied get one chance to be redone; the rest are dropped."""
     own = {s["id"]: s for s in segments[a:b]}
     payload = dict(base, context_before=[_row(s) for s in segments[max(0, a - CONTEXT):a]],
                    segments=[_row(s) for s in segments[a:b]], context_after=[_row(s) for s in segments[b:b + CONTEXT]])
     history, kept, taken, dropped = [], [], set(), 0
-    for attempt in range(2):
-        reply, raw = _retry(lambda: _ask(client, cfg, PROOF_SYSTEM, payload, history))
+    for attempt in range(chat.attempts):
+        reply, raw = chat.ask(PROOF_SYSTEM, payload, history)
         bad = []
         for item in reply.get("items") or []:
             if not isinstance(item, dict):
@@ -267,7 +366,7 @@ def _proof_batch(client, cfg, base, segments, a, b):
             kept.append(item)
         if not bad:
             break
-        if attempt == 1:
+        if attempt == chat.attempts - 1:
             dropped += len(bad)
             break
         lines = "\n".join(f"- {json.dumps(it.get('ids'), ensure_ascii=False)}：{why}" for it, why in bad)
@@ -275,15 +374,16 @@ def _proof_batch(client, cfg, base, segments, a, b):
     return kept, dropped
 
 
-def proofread(cfg, key, segments, outline_text):
-    """Returns (items, dropped): the edits and doubts DeepSeek found, batch by batch, and how many it could not get right.
+def proofread(cfg, chat, segments, outline_text):
+    """Returns (items, dropped): the edits and doubts the AI found, batch by batch, and how many it could not get right.
 
     Edits that the transcripts do not support are not thrown away: they come back marked uncertain, with the reason,
     so the review page can show them next to every transcript.
     """
     base = {"outline": outline_text, "glossary": glossary(cfg)}
-    with _client(cfg, key) as client, ThreadPoolExecutor(WORKERS) as pool:
-        jobs = [pool.submit(_proof_batch, client, cfg, base, segments, a, b) for a, b in batches(segments)]
+    parts = batches(segments, chat.batch) if chat.batch else [(0, len(segments))]
+    with ThreadPoolExecutor(WORKERS if chat.batch else 1) as pool:
+        jobs = [pool.submit(_proof_batch, chat, base, segments, a, b) for a, b in parts]
         items, dropped = [], 0
         for j in jobs:
             got, lost = j.result()

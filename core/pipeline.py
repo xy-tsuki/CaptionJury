@@ -3,10 +3,12 @@ import array
 import ctypes
 import difflib
 import json
+import queue
 import re
 import subprocess
 import threading
 import time
+import uuid
 import wave
 from pathlib import Path
 
@@ -21,12 +23,30 @@ LOAD_SHARE = 8  # part of a model's bar reserved for loading it
 ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu|using (CUDA|Vulkan)\d* backend")
 NAMES = {
     "extract": "提取音频", "vad": "语音检测", "qwen": "Qwen3-ASR", "qwen2": "Qwen3-ASR 复核", "mimo": "MiMo-V2.5-ASR",
-    "whisper": "Whisper large-v3", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
+    "whisper": "Whisper large-v3", "deepseek": "AI 校对", "moss": "MOSS 说话人",
 }
 
 
 class Cancelled(Exception):
     pass
+
+
+class Skipped(Exception):
+    """用户在 Agent 那一步点了跳过。"""
+
+
+class _Agent:
+    """订阅制 Agent：把提示词交给用户复制过去，等用户把回复粘贴回来。和 deepseek.Chat 用法一样。
+
+    全文一次给完（不分批），结构不对的条目不再追问，直接丢掉，免得用户来回复制好几次。
+    """
+    batch, attempts, name = None, 1, "Agent"
+
+    def __init__(self, owner, step):
+        self.owner, self.step = owner, step
+
+    def ask(self, system, payload, history=()):
+        return self.owner._wait_agent(self.step, deepseek.prompt_text(system, payload))
 
 
 def _norm(t):
@@ -93,6 +113,8 @@ class Queue:
         self.tracker = None
         self.paused_for = 0.0
         self.paused_at = None
+        self.agent_prompt = None  # 正在等用户粘贴时，交给 Agent 的提示词
+        self.agent_box = queue.Queue()  # 用户粘贴的回复（已解析的 JSON 和原文），None 表示跳过
 
     def _clock(self):
         """Seconds of working time: stands still while paused."""
@@ -127,6 +149,7 @@ class Queue:
     def stop(self):
         self.cancel = True
         self.paused = False
+        self.agent_box.put(None)
         p = self.proc
         if p and p.poll() is None:
             _suspend(p, False)
@@ -185,7 +208,7 @@ class Queue:
         for seg_lang in [x for x in ("zh", "ja") if lang in (x, "mix")]:
             for name in models.backups_for(cfg, seg_lang):
                 serves.setdefault(name, []).append(seg_lang)
-        # 顺序：备用模型（多模型对照）→ DeepSeek 大纲 → Qwen 复核（带大纲里的术语）→ DeepSeek 校对（AI 精度优化）
+        # 顺序：备用模型（多模型对照）→ AI 大纲 → Qwen 复核（带大纲里的术语）→ AI 校对（AI 精度优化）
         if compare:
             keys += [name for name in models.BACKUPS if name in serves]
         if opt:
@@ -452,7 +475,7 @@ class Queue:
         if new is None:
             for s in group:
                 s["status"] = "ask"
-                s["why"] = "DeepSeek 返回的修改异常，暂用 Qwen 的识别。"
+                s["why"] = "AI 返回的修改异常，暂用 Qwen 的识别。"
             return group
         for s in new:
             agree = sentences.backups_agree(s)
@@ -465,25 +488,81 @@ class Queue:
                 s["status"] = "ok" if agree else "keep"
         return new
 
-    def _key(self):
+    def _chat(self, cfg, step):
+        """这一步用的校对方式：Agent（等用户粘贴）或服务商接口。"""
+        if cfg.get("proof_mode") == "agent":
+            return _Agent(self, step)
         key = store.get_key()
         if not key:
-            raise RuntimeError("没有保存 DeepSeek 密钥，请先在设置里填写")
-        return key
+            raise RuntimeError(f"没有保存 {deepseek.label(cfg)} 的密钥，请先在设置里填写")
+        return deepseek.Chat(cfg, key)
+
+    def _wait_agent(self, step, prompt):
+        """暂停在这一步，等用户把 Agent 的回复粘贴回来（app 里校验过格式）。"""
+        while not self.agent_box.empty():  # 丢掉上一步残留的
+            self.agent_box.get_nowait()
+        self.agent_prompt = prompt
+        cur = self.state["current"]
+        cur["agent"] = {"k": uuid.uuid4().hex[:8], "step": step}
+        self.tracker.sim = None
+        self.tracker.set("deepseek", 40 if step == "proof" else 2, "等待粘贴结果")
+        try:
+            while True:
+                self._check()
+                try:
+                    got = self.agent_box.get(timeout=0.3)
+                except queue.Empty:
+                    continue
+                self._check()
+                if got is None:
+                    raise Skipped()
+                return got
+        finally:
+            cur.pop("agent", None)
+            self.agent_prompt = None
+
+    def agent_reply(self, step, text):
+        """app 收到用户粘贴的回复：解析并检查格式，不对就返回原因，对了交给等待中的步骤。"""
+        cur = self.state.get("current") or {}
+        if not cur.get("agent") or cur["agent"]["step"] != step:
+            return "现在没有在等这一步的结果"
+        try:
+            reply = deepseek.parse_reply(text)
+        except ValueError as e:
+            return str(e)
+        why = deepseek.check_shape(step, reply)
+        if why:
+            return why
+        self.agent_box.put((reply, text))
+        return None
+
+    def agent_skip(self):
+        self.agent_box.put(None)
 
     def _outline(self, cfg, job):
-        """DeepSeek 写全文大纲，存进任务；返回找到的专有名词，作为 Qwen 复核的提示。"""
+        """AI 写全文大纲，存进任务；返回找到的专有名词，作为 Qwen 复核的提示。"""
         segs = [s for s in job["segments"] if s["qwen"]]
         t = self.tracker
-        key = self._key()
+        name = deepseek.label(cfg)
         t.set("deepseek", 2, "生成大纲")
         t.creep("deepseek", 40, t.predicted("deepseek") * 0.4, "生成大纲")
         try:
-            job["outline"], terms = deepseek.outline(cfg, key, segs)
-        except Exception as e:  # 字幕照样能用，审阅页当作草稿显示
+            chat = self._chat(cfg, "outline")
+            if isinstance(chat, _Agent):
+                job["outline"], terms = deepseek.outline(cfg, chat, segs)
+            else:
+                with chat:
+                    job["outline"], terms = deepseek.outline(cfg, chat, segs)
+        except Skipped:  # 跳过大纲：校对照常做，只是没有大纲和术语提示
+            job["outline"] = ""
+            t.set("deepseek", 40, "等待校对")
+            return []
+        except Cancelled:
+            raise
+        except Exception as e:  # 字幕照样能用，校对页当作草稿显示
             self._check()
             job["outline"] = None
-            job["warnings"].append("DeepSeek 生成大纲失败，没有做校对，已保留 Qwen 的识别结果：" + str(e)[:200])
+            job["warnings"].append(f"{name} 生成大纲失败，没有做校对，已保留 Qwen 的识别结果：" + str(e)[:200])
             t.finish("deepseek", "失败", learn=False)
             return []
         self._check()
@@ -530,16 +609,27 @@ class Queue:
             return
         segs = [s for s in job["segments"] if s["qwen"]]
         t = self.tracker
-        key = self._key()
+        name = deepseek.label(cfg)
         cur = self.state["current"]
-        cur["stream"], cur["stream_name"] = [], "DeepSeek 校对"
+        cur["stream"], cur["stream_name"] = [], f"{name} 校对"
         t.set("deepseek", 40, "全文校对")
         t.creep("deepseek", 98, t.predicted("deepseek") * 0.6, "全文校对")
         try:
-            items, dropped = deepseek.proofread(cfg, key, segs, job["outline"])
-        except Exception as e:  # subtitles stay usable; the review page shows them as drafts
+            chat = self._chat(cfg, "proof")
+            if isinstance(chat, _Agent):
+                items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"])
+            else:
+                with chat:
+                    items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"])
+        except Skipped:
+            job["warnings"].append("跳过了 AI 校对，保留的是 Qwen 的识别结果")
+            t.finish("deepseek", "已跳过", learn=False)
+            return
+        except Cancelled:
+            raise
+        except Exception as e:  # 字幕照样能用，校对页当作草稿显示
             self._check()
-            job["warnings"].append("DeepSeek 校对失败，已保留 Qwen 的识别结果：" + str(e)[:200])
+            job["warnings"].append(f"{name} 校对失败，已保留 Qwen 的识别结果：" + str(e)[:200])
             t.finish("deepseek", "失败", learn=False)
             return
         self._check()
@@ -562,9 +652,9 @@ class Queue:
             elif s["id"] not in covered:
                 agree = sentences.backups_agree(s)
                 s["status"] = "ok" if agree else "keep"
-                s["why"] = "" if agree else "几份结果不同，DeepSeek 保留了 Qwen 的写法。"
+                s["why"] = "" if agree else "几份结果不同，AI 保留了 Qwen 的写法。"
                 final.append(s)
         job["segments"] = sentences.finalize(final)
         if ignored + dropped:
-            job["warnings"].append(f"DeepSeek 有 {ignored + dropped} 处修改的编号不合理，已忽略")
-        t.finish("deepseek")
+            job["warnings"].append(f"{name} 有 {ignored + dropped} 处修改的编号不合理，已忽略")
+        t.finish("deepseek", learn=cfg.get("proof_mode") != "agent")  # 等用户粘贴的时间不算进速度

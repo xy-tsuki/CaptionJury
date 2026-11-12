@@ -49,7 +49,15 @@ assert doubt({"text": ""}, g) is None
 calls = []
 
 
-def fake_ask(client, cfg, system, payload, history=()):
+class FakeChat:
+    """代替真实接口：第一次回一组有错的条目，第二次（收到反馈后）只回重做的那条。"""
+    batch, attempts = deepseek.BATCH, 2
+
+    def ask(self, system, payload, history=()):
+        return fake_ask(system, payload, history)
+
+
+def fake_ask(system, payload, history=()):
     calls.append((payload, list(history)))
     if not history:
         reply = {"items": [{"ids": [7], "text": "零重力座椅打开以后你就可以完全躺平休息了。", "uncertain": False, "reason": "通顺"},
@@ -60,9 +68,8 @@ def fake_ask(client, cfg, system, payload, history=()):
     return reply, json.dumps(reply, ensure_ascii=False)
 
 
-deepseek._ask = fake_ask
 segs = [g[0], seg(8, "这个跟M九一样的", qwen2="这个跟M9是一样的"), seg(9, "是吧。"), seg(10, "好")]
-items, dropped = deepseek._proof_batch(None, {}, {"outline": "", "glossary": []}, segs, 0, 4)
+items, dropped = deepseek._proof_batch(FakeChat(), {"outline": "", "glossary": []}, segs, 0, 4)
 assert len(calls) == 2 and "无法套用" in calls[1][1][0][1] and "[99]" in calls[1][1][0][1]
 assert [it["ids"] for it in items] == [[7], [8, 9], [10]] and dropped == 0
 assert items[0]["uncertain"] and "校验" in items[0]["reason"] and items[0]["reason"].startswith("通顺")
@@ -71,11 +78,57 @@ assert calls[0][0]["context_before"] == [] and [r["id"] for r in calls[0][0]["se
 
 # Context rows are sent but are not the batch's own.
 calls.clear()
-items, dropped = deepseek._proof_batch(None, {}, {"outline": "", "glossary": []}, segs, 2, 4)
+items, dropped = deepseek._proof_batch(FakeChat(), {"outline": "", "glossary": []}, segs, 2, 4)
 assert [r["id"] for r in calls[0][0]["context_before"]] == [7, 8]
 assert [it["ids"] for it in items] == [[10]] and dropped == 0  # 7 and 8 are context here: refused, then redone
 # 大纲输入：其他模型写法和 Qwen 一样（忽略标点）时只发 Qwen 的文字；不一样时附上，重复的写法只留一份
 assert deepseek._outline_row({"qwen": "去浅草寺。", "whisper": "去浅草寺", "mimo": ""}) == "去浅草寺。"
 row = deepseek._outline_row({"qwen": "去浅草四。", "whisper": "去浅草寺", "mimo": "去浅草寺。", "moss": "去浅草"})
 assert row == {"primary": "去浅草四。", "others": {"MiMo": "去浅草寺。", "MOSS": "去浅草"}}, row
+
+# 交给 Agent 时只给一次机会：结构不对的条目直接丢掉，不再追问
+class OnceChat(FakeChat):
+    attempts = 1
+
+
+calls.clear()
+items, dropped = deepseek._proof_batch(OnceChat(), {"outline": "", "glossary": []}, segs, 0, 4)
+assert len(calls) == 1 and dropped == 1 and [it["ids"] for it in items] == [[7], [8, 9]]
+
+# 粘贴回来的回复：前后有说明文字、代码块、思考过程都能取出 JSON
+assert deepseek.parse_reply('好的，结果如下：\n```json\n{"items": []}\n```\n有问题再说') == {"items": []}
+assert deepseek.parse_reply('<think>{"x":1}</think>{"outline": "大纲", "terms": []}')["outline"] == "大纲"
+assert deepseek.parse_reply('前言 {"items": [{"ids": [1], "text": "a"}]} 后记')["items"][0]["ids"] == [1]
+for bad in ("没有 JSON", '{"items": [', "[1, 2]"):
+    try:
+        deepseek.parse_reply(bad)
+        raise AssertionError(bad)
+    except ValueError:
+        pass
+assert deepseek.check_shape("outline", {"outline": "x"}) is None and deepseek.check_shape("outline", {"items": []})
+assert deepseek.check_shape("proof", {"items": []}) is None and deepseek.check_shape("proof", {"outline": "x"})
+assert "只回复一个 JSON" in deepseek.prompt_text("说明", {"a": 1}) and deepseek.prompt_text("说明", {"a": 1}).startswith("说明")
+
+# 接口不认某些参数时，去掉再试；记住以后不再带
+import httpx
+seen = []
+
+
+def handler(request):
+    body = json.loads(request.content)
+    seen.append(sorted(body))
+    if "response_format" in body:
+        return httpx.Response(400, text='{"error": "response_format is not supported"}')
+    if body.get("max_tokens", 0) > 16384:
+        return httpx.Response(400, text='{"error": "max_tokens must be at most 16384"}')
+    return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"content": '```json\n{"items": []}\n```'}}]})
+
+
+chat = deepseek.Chat({"proof_provider": "custom", "proof_url": "http://x/v1", "proof_model": "m"}, "k")
+chat.client = httpx.Client(base_url="http://x/v1", transport=httpx.MockTransport(handler))
+assert chat.ask("s", {"a": 1})[0] == {"items": []}
+assert "response_format" in chat.drop and chat.max_tokens == 16384 and len(seen) == 3
+seen.clear()
+chat.ask("s", {"a": 1})
+assert len(seen) == 1  # 第二次直接用学到的参数
 print("all passed")

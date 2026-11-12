@@ -13,13 +13,13 @@ local_models.use()
 store.load_config()
 shutil.copy(saved / "deepseek.key", store.KEYFILE)
 real = json.loads((saved / "config.json").read_text(encoding="utf-8"))
-store.save_config({k: real[k] for k in ("deepseek_url", "deepseek_model", "glossary") if k in real})
+store.save_config({k: real[k] for k in ("proof_provider", "proof_url", "proof_model", "glossary") if k in real})
 cfg = store.load_config()
 models = deepseek.test(cfg, store.get_key())
-print("models", models, "using", cfg["deepseek_model"])
-if cfg["deepseek_model"] not in models:
-    store.save_config({"deepseek_model": os.environ.get("TEST_MODEL", "deepseek-flash")})
-    print("configured model is not listed; testing with", store.load_config()["deepseek_model"])
+print("models", models, "using", cfg["proof_model"])
+if cfg["proof_model"] not in models:
+    store.save_config({"proof_model": os.environ.get("TEST_MODEL", "deepseek-flash")})
+    print("configured model is not listed; testing with", store.load_config()["proof_model"])
 
 for path, out in zip(sys.argv[1::2], sys.argv[2::2]):
     q = pipeline.Queue()
