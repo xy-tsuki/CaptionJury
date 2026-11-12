@@ -134,6 +134,11 @@ mark:empty{display:none}
 .m-form{flex:1;overflow:auto;padding:24px 28px;display:flex;flex-direction:column;gap:24px}
 .m-sec{display:flex;flex-direction:column;gap:10px}
 .m-sec>.lbl{font-size:13px;font-weight:600}
+.tip{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;background:var(--accsoft);color:var(--accfg);font-size:12.5px;line-height:1.7}
+.tip>span{flex:1;min-width:0}
+.tip .stt{display:inline-flex;align-items:center;gap:5px;margin-right:12px;color:var(--fg2)}
+.tip .x{width:24px;height:24px;flex:none;background:none;border:0;color:inherit;cursor:pointer;display:grid;place-items:center}
+.e-right>.tip{flex:none;border-bottom:1px solid var(--line)}
 .modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .mode{display:flex;flex-direction:column;gap:6px;text-align:left;padding:12px 14px;border:1px solid var(--line2);background:transparent;cursor:pointer;color:var(--fg);font:inherit;transition:background .16s,border-color .16s}
 .mode:hover{background:var(--sunk)}
@@ -264,6 +269,7 @@ mark:empty{display:none}
 .e-bar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:9px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
 .e-bar .sp{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .e-bar .pick{flex:0 1 240px}
+.e-bar .pick#linemax{flex:0 0 auto;width:auto}
 .frbar{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line);align-items:center;background:var(--panel)}
 .frbar .field{height:30px;font-size:13px}
 .list{flex:1;min-height:0;overflow:auto}
@@ -293,6 +299,10 @@ mark:empty{display:none}
 .menu-pop .fmts{gap:4px}
 .menu-pop .fmt{min-width:0;flex:1;height:30px}
 .menu-pop p{font-size:12px;color:var(--fg3);line-height:1.5}
+.menu-pop .howto{font-size:12px;color:var(--fg2);border-top:1px solid var(--line);padding-top:8px}
+.menu-pop .howto summary{cursor:pointer;color:var(--fg2)}
+.menu-pop .howto ul{margin:4px 0 0;padding-left:16px;line-height:1.7;color:var(--fg3)}
+.menu-pop .howto p{margin-top:6px}
 
 /* 时间轴：上面一条是整段录音的总览，下面是当前位置的波形和字幕块 */
 .wave{flex:none;border-top:1px solid var(--line);padding:8px 16px 10px;display:flex;flex-direction:column;gap:6px;background:var(--panel)}

@@ -23,6 +23,7 @@ const I = {
 const S = { cfg: null, terms: '', tf: { topic: '', field: '', people: '', files: true }, files: [], lang: 'mix', mode: 'accurate', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
 const api = () => window.pywebview.api;
 const FORMATS = ['SRT', 'ASS', 'VTT', 'TXT'];
+const LINE_KINDS = { wide: '横屏 · 每条≤18字', tall: '竖屏 · 每条≤12字', full: '不限字数' };
 const LANGS = { zh: '中文', ja: '日语', mix: '中文 + 日语' };
 
 function hms(t, ms) {
@@ -90,6 +91,15 @@ function exportMenu(jid, small = true) {
       <div class="fmts">${FORMATS.map((x) => `<button type="button" class="fmt mono${f.includes(x) ? ' on' : ''}" data-xf="${x}" aria-pressed="${f.includes(x)}">${x}</button>`).join('')}</div>
       <p>写在源文件所在的文件夹（写不进去时存到"文档\听写字幕"），再次导出会覆盖上次导出的文件。</p>
       <button class="btn sm solid" type="button" data-xgo>导出</button>
+      <details class="howto"><summary>怎么导入剪辑软件</summary>
+        <p>都用 SRT：</p>
+        <ul>
+          <li>剪映：文本 → 本地字幕 → 导入字幕</li>
+          <li>Premiere：文件 → 导入，再把 SRT 拖到时间线上</li>
+          <li>达芬奇：文件 → 导入 → 字幕，再拖到时间线上</li>
+          <li>Final Cut：文件 → 导入 → 字幕</li>
+        </ul>
+      </details>
     </div>
   </details>`;
 }
@@ -120,6 +130,10 @@ function bindExport(root = document) {
 document.addEventListener('click', (e) => {  // 点菜单外面就收起
   $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; });
 });
+
+/* 只显示一次的提示：关掉后记在本机，存储用不了时每次都显示 */
+const tipSeen = (k) => { try { return localStorage.getItem('tip_' + k) === '1'; } catch { return false; } };
+const tipHide = (k) => { try { localStorage.setItem('tip_' + k, '1'); } catch { /* 存不了就下次再显示 */ } };
 
 /* ---------- 新建 ---------- */
 /* 三种模式：快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
@@ -176,6 +190,7 @@ function renderNew() {
     </section>
     <section class="m-right" aria-label="转写设置">
       <div class="m-form">
+        ${S.firstRun ? `<div class="tip"><span>模型装好了。先拖一个短视频进来，用<b>快速</b>模式试一下；想要更准，在设置里配置校对 AI 后换成<b>精准</b>模式。</span><button class="x" type="button" id="tipnew" aria-label="关掉提示">${I.x}</button></div>` : ''}
         <div class="m-sec"><span class="lbl">识别语言</span><div class="seg" role="group" aria-label="识别语言">${seg}</div></div>
         <div class="m-sec"><span class="lbl">模式</span>
           <div class="modes" role="radiogroup" aria-label="模式">${Object.entries(MODES).map(([id, [name, desc]]) => `<button type="button" class="mode${S.mode === id ? ' on' : ''}" role="radio" aria-checked="${S.mode === id}" data-mode="${id}"><b>${name}</b><span>${desc}</span>${estimate(id) ? `<em class="mono">${estimate(id)}</em>` : ''}</button>`).join('')}</div>
@@ -212,6 +227,7 @@ function renderNew() {
     <div class="fs"><span class="t">生成字幕</span><span class="d mono">${S.formats.join(' ') || '未选择格式'}</span></div>
   </section>`}`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
+  if ($('#tipnew')) $('#tipnew').onclick = () => { S.firstRun = false; renderNew(); };
   $$('[data-mode]').forEach((b) => { b.onclick = () => { S.mode = b.dataset.mode; renderNew(); }; });
   if ($('#opt')) $('#opt').onchange = (e) => { S.opt = e.target.checked; renderNew(); };
   if ($('#compare')) $('#compare').onchange = (e) => { S.compare = e.target.checked; renderNew(); };
@@ -503,11 +519,12 @@ async function renderReview() {
       <div class="e-bar">
         <select class="pick" id="jobsel" aria-label="切换转写结果">${options}</select>
         <div class="seg small" role="group" aria-label="筛选" id="flt"></div>
-        <div class="sp"><label class="check tags" title="导出的字幕去掉全部句号，逗号和日语顿号改成空格"><input type="checkbox" id="nopunct" ${j.no_punct ? 'checked' : ''}><span>去掉标点</span></label>${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags ? 'checked' : ''}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
+        <div class="sp"><select class="pick" id="linemax" aria-label="导出时每条字幕的字数" title="导出时一句太长就拆成几条字幕，在标点或停顿处拆开">${Object.entries(LINE_KINDS).map(([k, l]) => `<option value="${k}" ${(j.line_max || 'wide') === k ? 'selected' : ''}>${l}</option>`).join('')}</select><label class="check tags" title="导出的字幕去掉全部句号，逗号和日语顿号改成空格"><input type="checkbox" id="nopunct" ${j.no_punct ? 'checked' : ''}><span>去掉标点</span></label>${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags ? 'checked' : ''}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
       </div>
       <div class="frbar" id="frbar" hidden>
         <input class="field" id="f1" placeholder="查找" aria-label="查找"><input class="field" id="f2" placeholder="替换为" aria-label="替换为"><button class="btn sm" type="button" id="frgo">全部替换</button>
       </div>
+      ${tipSeen('review') ? '' : `<div class="tip"><span>${Object.entries(TAGS).map(([k, l]) => `<span class="stt ${stc(k)}"><i class="dot"></i>${l}</span>`).join('')}　点一条，左边会列出各模型的写法，可以一键采用；先看<b>存疑</b>的就行。</span><button class="x" type="button" id="tiprev" aria-label="关掉提示">${I.x}</button></div>`}
       <div class="list" id="list"></div>
     </section>
   </main>
@@ -531,6 +548,8 @@ async function renderReview() {
     if (seg && seg.id !== S.sel && !m.paused) select(seg.id, false);
   };
   $('#jobsel').onchange = async (e) => { await openJob(e.target.value); renderReview(); };
+  if ($('#tiprev')) $('#tiprev').onclick = (e) => { tipHide('review'); e.currentTarget.parentElement.remove(); };
+  $('#linemax').onchange = async (e) => { j.line_max = e.target.value; await api().set_line_max(j.id, e.target.value); };
   $('#nopunct').onchange = async (e) => { j.no_punct = e.target.checked; await api().set_no_punct(j.id, e.target.checked); };
   if ($('#tags')) $('#tags').onchange = async (e) => { j.speaker_tags = e.target.checked; await api().set_speaker_tags(j.id, e.target.checked); };
   $('#fr').onclick = () => { const b = $('#frbar'); b.hidden = !b.hidden; $('#fr').setAttribute('aria-expanded', !b.hidden); if (!b.hidden) $('#f1').focus(); };
@@ -979,7 +998,7 @@ async function renderSetup() {
   $$('[name="rt"]').forEach((r) => { r.onchange = () => { S.pick = r.value; renderSetup(); }; });
   $('#msrc').onchange = (e) => { S.src = e.target.value; };
   $('#setgo').onclick = async () => {
-    if (setupReady()) { location.hash = '#new'; return; }
+    if (setupReady()) { S.firstRun = true; S.mode = 'fast'; location.hash = '#new'; return; }
     await api().save_config({ gpu_backend: S.pick });
     showSys(S.pick);
     if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
