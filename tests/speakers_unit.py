@@ -67,6 +67,14 @@ assert len(new) == 1 and new[0]["qwen"] == "八点见吧。" and new[0]["a"] == 
 only = sentences.apply_edit([x], "我们明天早上")
 assert only[0]["qwen"] == "" and only[0]["extra"] and only[0]["whisper"] == "我们明天早上", only
 
+# 整句改写（和原来的字对不上大半）时 apply_edit 不接，rough_edit 照用 AI 的文字，时间按字数均摊
+y = {"qwen": "かぐらめは聖戦装。", "times": [], "speaker": "1", "a": 12.0, "b": 13.2, "spoken_end": 13.2, "lang": "ja", "chunk": 0, "whisper": "かぐらめは生前葬"}
+x2 = dict(x, text="カグラムや正々そう", whisper="カグラムや正々そう", a=11.0, b=12.0, spoken_end=12.0)
+assert sentences.apply_edit([x2, y], "神楽めあ生前葬。") is None
+r = sentences.rough_edit([x2, y], "神楽めあ生前葬。\nいいね。")
+assert [s["text"] for s in r] == ["神楽めあ生前葬。", "いいね。"] and r[0]["a"] == 11.0 and abs(r[-1]["b"] - 13.2) < 1e-9
+assert r[0]["qwen"] == "かぐらめは聖戦装。" and r[0]["whisper"] == "カグラムや正々そうかぐらめは生前葬" and r[0]["speaker"] == "1" and "extra" not in r[0], r
+
 # 没说完、不停顿接着说的半句合成一句；有句末标点、换了人、停顿长或合起来太长的不合
 def fs(text, a, b, who="1"):
     return {"qwen": text, "text": text, "times": [(a, b)] * len(text), "a": a, "b": b, "speaker": who, "span": [0, len(text)]}

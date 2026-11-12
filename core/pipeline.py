@@ -490,6 +490,9 @@ class Queue:
             new = None
         else:
             new = sentences.apply_edit(group, text)
+        rough = new is None and bool(text)
+        if rough:  # 整句改写、和原来的字对不上大半：照用，但标成存疑
+            new = sentences.rough_edit(group, text)
         if new is None:
             for s in group:
                 s["status"] = "ask"
@@ -498,7 +501,10 @@ class Queue:
         for s in new:
             agree = sentences.backups_agree(s)
             s["why"] = deepseek.readable(item.get("reason", "") or "")
-            if s.get("extra"):  # 还是只有其他模型听到的，交给用户确认
+            if rough:
+                s["status"] = "ask"
+                s["why"] = "；".join(x for x in (s["why"], sentences.ROUGH_WHY) if x)
+            elif s.get("extra"):  # 还是只有其他模型听到的，交给用户确认
                 s["status"] = "ask"
                 s["why"] = s["why"] or sentences.EXTRA_WHY
             elif item.get("uncertain"):

@@ -617,6 +617,36 @@ def backups_agree(s):
     return any(s.get(k) and plain(s[k]) == plain(s["qwen"]) for k in models.BACKUPS)
 
 
+ROUGH_WHY = "AI 改动很大，和原来的字对不上，时间按字数估计，请对照各模型的结果确认。"
+
+
+def rough_edit(group, text):
+    """AI 的改写和原来的字大半对不上时（多半是把乱字整句改成了正确的说法），照用它的文字，时间在整组里按字数均摊。
+
+    原来各份识别结果都放在第一条上，供校对页对照。
+    """
+    lines = [x.strip() for x in text.split("\n") if x.strip()]
+    a0, a1 = group[0]["a"], max(s.get("spoken_end", s["b"]) for s in group)
+    total = sum(len(x) for x in lines) or 1
+    speaker = next((s["speaker"] for s in group if s.get("speaker")), "")
+    out, t = [], a0
+    for n, line in enumerate(lines):
+        end = t + (a1 - a0) * len(line) / total
+        first = n == 0
+        out.append({
+            "id": 0, "a": t, "b": end, "lang": group[0]["lang"], "qwen": "".join(s["qwen"] for s in group) if first else "",
+            "text": line, "status": "raw", "why": "", "chunk": group[0].get("chunk", 0), "span": [0, 0], "times": [], "speaker": speaker,
+            **{f: "".join(s.get(f) or "" for s in group) if first else "" for f in OTHERS},
+        })
+        t = end
+    alts = [x for s in group for x in s.get("alts") or []]
+    if alts:
+        out[0]["alts"] = alts
+    if all(s.get("extra") for s in group):
+        out[0]["extra"] = True
+    return out
+
+
 def apply_edit(group, text):
     """Replaces adjacent sentences with DeepSeek's lines, retiming each from the original characters.
 
