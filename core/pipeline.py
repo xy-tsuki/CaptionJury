@@ -21,7 +21,7 @@ LOAD_SHARE = 8  # part of a model's bar reserved for loading it
 ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu|using (CUDA|Vulkan)\d* backend")
 NAMES = {
     "extract": "提取音频", "vad": "语音检测", "qwen": "Qwen3-ASR", "qwen2": "Qwen3-ASR 复核", "mimo": "MiMo-V2.5-ASR",
-    "parakeet": "parakeet-ctc-1.1b-ja", "whisper": "Whisper large-v3", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
+    "whisper": "Whisper large-v3", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
 }
 
 
@@ -330,8 +330,8 @@ class Queue:
         t = self.tracker
         t.set("vad", 1)
         t.creep("vad", 97, t.predicted("vad"))  # CrispASR reports nothing during detection, so this bar is estimated
-        key = "parakeet" if Path(cfg["parakeet_model"]).exists() else "qwen"
-        cmd = self._base(cfg) + self._model_args(cfg, key) + [
+        # 人声检测只用 CrispASR 自带的 webrtc，和加载哪个模型无关
+        cmd = self._base(cfg) + self._model_args(cfg, "qwen") + [
             "-f", "audio.wav", "--vad", "-vm", "webrtc", "-vsd", "300", "-vmsd", "28", "--strict-pipeline", "--vad-export", "seg.json",
         ]
         self._spawn(cmd, d)

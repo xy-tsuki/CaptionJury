@@ -20,7 +20,7 @@ assert "backups" not in deepseek._row(seg(2, "好"))
 
 # A sentence counts as confirmed when any backup heard it as Qwen did, punctuation aside.
 assert not sentences.backups_agree(s)
-assert sentences.backups_agree(seg(1, "好的。", parakeet="好的"))
+assert sentences.backups_agree(seg(1, "好的。", whisper="好的"))
 
 # A backup's text goes only to the sentences of the languages it was picked for.
 grp = [seg(1, "你好。", span=[0, 3]), seg(2, "こんにちは。", lang="ja", span=[3, 9])]
@@ -39,7 +39,19 @@ cfg = {k: __file__ for m in models.MODELS.values() for k in m["files"]}  # every
 assert models.backups_for(dict(cfg, backups={"zh": ["whisper", "mimo"]}), "zh") == ["mimo", "whisper"]
 assert models.backups_for(dict(cfg, backups={"ja": ["mimo", "whisper"]}), "ja") == ["whisper"]  # MiMo knows no Japanese
 assert models.backups_for(dict(cfg, whisper_model="missing.bin", backups={"zh": ["whisper"]}), "zh") == []
-assert models.backups_for(dict(cfg, backups={}), "ja") == ["parakeet"]  # nothing picked yet: the defaults
+assert models.backups_for(dict(cfg, backups={}), "ja") == ["whisper"]  # nothing picked yet: the defaults
+
+# 设置里还留着已经去掉的模型（parakeet）时，读设置会把它去掉；某种语言只剩它的，改回默认。
+import json, os, tempfile
+os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
+import importlib
+from core import store
+importlib.reload(store)
+store.HOME.mkdir(parents=True, exist_ok=True)
+store.CONFIG.write_text(json.dumps({"backups": {"zh": ["mimo"], "ja": ["parakeet"]}}), encoding="utf-8")
+assert store.load_config()["backups"] == {"zh": ["mimo"], "ja": ["whisper"]}
+store.CONFIG.write_text(json.dumps({"backups": {"zh": [], "ja": ["whisper", "parakeet"]}}), encoding="utf-8")
+assert store.load_config()["backups"] == {"zh": [], "ja": ["whisper"]}
 
 # New sentences carry an empty field for every transcript.
 assert all(k in sentences.OTHERS for k in models.BACKUPS)

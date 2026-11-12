@@ -49,16 +49,10 @@ MODELS = {
                                     "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1")},
         "desc": "中日都能当备用，速度快，错误和 Qwen 不同，适合投票；单独用时会凭空编句子。",
     },
-    "parakeet": {
-        "label": "Parakeet CTC 1.1B ja", "short": "Parakeet", "role": "backup", "langs": ("ja",),
-        "files": {"parakeet_model": _f(r"parakeet-ctc-1.1b-ja\parakeet-ctc-1.1b-ja-q8_0.gguf", "cstr/parakeet-ctc-1.1b-ja-GGUF", 1137330464,
-                                     "4fca7a83833012d515b4a71ab3df9a0abcf3362107369850d89dda962dfd34b4")},
-        "desc": "日语备用，速度快，只懂日语。",
-    },
 }
 
 BACKUPS = tuple(k for k, m in MODELS.items() if m["role"] == "backup")
-DEFAULT_BACKUPS = {"zh": ["mimo"], "ja": ["parakeet"]}
+DEFAULT_BACKUPS = {"zh": ["mimo"], "ja": ["whisper"]}
 
 
 SOURCES = {
@@ -121,8 +115,6 @@ def args(cfg, name):
         return ["--backend", "mimo-asr", "-m", cfg["mimo_model"], "--codec-model", cfg["mimo_codec"]]
     if name == "whisper":
         return ["--backend", "whisper", "-m", cfg["whisper_model"]]
-    if name == "parakeet":
-        return ["--backend", "fastconformer-ctc", "-m", cfg["parakeet_model"]]
     if name == "moss":
         return ["--backend", "moss-diarize", "-m", cfg["moss_model"]]  # -n（最多输出多少 token）按窗口长度在流水线里给
     raise KeyError(name)

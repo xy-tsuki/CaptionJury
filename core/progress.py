@@ -2,8 +2,8 @@
 import math
 
 # Seconds of fixed start-up per step, then seconds per second of audio. Rates are refined after every run.
-STARTUP = {"extract": 0.3, "vad": 1.0, "qwen": 6.0, "qwen2": 6.0, "mimo": 12.0, "parakeet": 3.0, "whisper": 3.0, "deepseek": 1.0, "moss": 5.0}
-RATES = {"extract": 0.005, "vad": 0.004, "qwen": 0.22, "qwen2": 0.22, "mimo": 0.75, "parakeet": 0.05, "whisper": 0.12, "deepseek": 0.15, "moss": 0.12}
+STARTUP = {"extract": 0.3, "vad": 1.0, "qwen": 6.0, "qwen2": 6.0, "mimo": 12.0, "whisper": 3.0, "deepseek": 1.0, "moss": 5.0}
+RATES = {"extract": 0.005, "vad": 0.004, "qwen": 0.22, "qwen2": 0.22, "mimo": 0.75, "whisper": 0.12, "deepseek": 0.15, "moss": 0.12}
 LEARN_MIN_AUDIO = 30.0  # short files are dominated by start-up, so they teach nothing about rates
 SPEECH_GUESS = 0.8  # share of a file assumed to be speech until detection has run
 
@@ -15,10 +15,9 @@ class Tracker:
         self.started = {}
         self.sim = None
         guess = duration * SPEECH_GUESS
-        both = "mimo" in keys and "parakeet" in keys
         self.audio = {
             "extract": duration, "vad": duration, "qwen": guess, "qwen2": guess, "deepseek": guess, "moss": guess * 2,
-            "mimo": guess * (0.6 if both else 1), "parakeet": guess * (0.4 if both else 1), "whisper": guess,
+            "mimo": guess, "whisper": guess,
         }
         cur["lanes"] = [{"key": k, "name": k, "pct": 0, "state": "等待"} for k in keys]
 

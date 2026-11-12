@@ -47,6 +47,12 @@ def load_config():
     cfg = dict(DEFAULTS)
     if CONFIG.exists():
         cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+    # 去掉已经不支持的备用模型（Parakeet 在 2026-11-12 去掉了）；某种语言只勾了它的，改回默认
+    backups = {}
+    for lang, names in (cfg.get("backups") or {}).items():
+        kept = [k for k in names if k in models.BACKUPS]
+        backups[lang] = kept if kept or not names else list(models.DEFAULT_BACKUPS.get(lang, []))
+    cfg["backups"] = backups or models.DEFAULT_BACKUPS
     if cfg["ffmpeg"] == "ffmpeg" and getattr(sys, "frozen", False) and BUNDLED_FFMPEG.is_file():
         cfg["ffmpeg"] = str(BUNDLED_FFMPEG)
     return cfg
