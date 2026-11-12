@@ -91,4 +91,23 @@ assert len(sentences.place_extras([dict(s) for s in ja], [
 ])) == 3
 assert len(sentences.place_extras([dict(s) for s in ja], [{"a": 1.85, "b": 3.0, "lang": "ja", "field": "whisper", "text": "だめ"}])) == 3
 assert len(sentences.place_extras([dict(s) for s in segs], [{"a": 1.85, "b": 3.0, "lang": "zh", "field": "mimo", "text": "中间多出来一句话"}])) == 3
+
+# 重复的不插：MOSS 把旁边那句又听写了一遍（写法略有不同），大部分字已经在前后句里出现过
+dup = [seg(1, "大丈夫南無妙法蓮華経とかしなくても私は成仏する。", 0.0, 3.0, lang="ja", moss="大丈夫、生放電芸教とかしなくても私は丈夫する。"),
+       seg(2, "全然成仏するから私は。", 7.0, 9.0, lang="ja")]
+assert len(sentences.place_extras([dict(s) for s in dup], [{"a": 3.5, "b": 6.0, "lang": "ja", "field": "moss", "text": "大丈夫、名も方連げきょうとかしなくても私は成仏する。"}])) == 2
+# 只有零散单字对得上的不算重复，照常插
+assert len(sentences.place_extras([dict(s) for s in dup], [{"a": 3.5, "b": 6.0, "lang": "ja", "field": "whisper", "text": "香典はもらう"}])) == 3
+# 只有 Whisper 听到的客套话不插
+assert len(sentences.place_extras([dict(s) for s in dup], [{"a": 3.5, "b": 6.0, "lang": "ja", "field": "whisper", "text": "ナムありがとうございました。"}])) == 2
+# 最长 6 秒：没有逐字时间、铺满整块静音的不会挂几十秒
+out = sentences.place_extras([dict(s) for s in dup[:1]], [{"a": 3.5, "b": 33.0, "lang": "ja", "field": "whisper", "text": "香典はもらう"}])
+assert out[1]["b"] - out[1]["a"] <= sentences.EXTRA_MAX_LEN, out[1]
+
+# 交给 Qwen 的提示最多 40 个词，去掉重复
+from core import pipeline  # noqa: E402
+
+hint = pipeline._hint([f"词{i}" for i in range(300)] + ["词0"])
+assert "词39" in hint and "词40" not in hint and hint.count("词0、") == 1, hint
+assert pipeline._hint([]) == ""
 print("all passed")

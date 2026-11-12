@@ -19,6 +19,7 @@ PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
 SLICES_DONE = re.compile(r"\((\d+)/\d+ slices\)")
 OUT_TIME = re.compile(r"out_time_(?:us|ms)=(\d+)")
 LOAD_SHARE = 8  # part of a model's bar reserved for loading it
+HINT_MAX = 40  # 交给 Qwen 的提示最多带几个词
 # 各模型在日志里说明用上了显卡的写法；Whisper 写的是 "using CUDA0 backend"
 ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu|using (CUDA|Vulkan)\d* backend")
 NAMES = {
@@ -63,7 +64,12 @@ def _moss_tokens(raw):
 
 
 def _hint(terms):
-    """The context Qwen gets. A bare list of words is sometimes read back as the transcript; a sentence is not."""
+    """交给 Qwen 的上下文提示。写成一句话：光列词表时 Qwen 有时会把它当成识别结果读出来。
+
+    最多 HINT_MAX 个词：词库可能有几百个，全塞给 Qwen 并没有让它写对（2026-11-12 试过近 300 个），
+    反而会把读音相近的话带偏；完整的词库照样交给 AI 大纲和校对。
+    """
+    terms = list(dict.fromkeys(terms))[:HINT_MAX]
     return f"这段录音里可能出现这些词：{'、'.join(terms)}。" if terms else ""
 
 
@@ -581,7 +587,8 @@ class Queue:
         made = chunks.make(d / "audio.wav", self.vad_raw, chunks.TARGET / 2)
         slices2 = [(c["t0_cs"] / 100, c["t1_cs"] / 100, c) for c in made]
         self.tracker.set_audio("qwen2", sum(b - a for a, b, _ in slices2))
-        context = _hint(list(dict.fromkeys(deepseek.glossary(cfg) + terms)))
+        # 大纲是对着这段的识别稿挑的词，比词库更贴近这一段，放在前面
+        context = _hint(terms + deepseek.glossary(cfg))
         texts, words = self._asr(cfg, "qwen2", d, slices2, lang, context=context)
         stream = sentences.stitch(slices2, texts, words)
         gs = sentences.groups(segs)

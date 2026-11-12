@@ -218,7 +218,11 @@ async function start() {
 
 /* ---------- 词库 ---------- */
 const termLines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean);
-const termCount = () => { const n = new Set(termLines(S.terms)).size; return n ? `${n} 个词` : '可以留空'; };
+const termCount = () => {
+  const n = new Set(termLines(S.terms)).size;
+  if (!n) return '可以留空';
+  return n > 40 ? `${n} 个词。识别时只把前 40 个告诉 Qwen，全部交给 AI 校对；常用的词放前面` : `${n} 个词`;
+};
 
 /* 往词库框后面接上新的词，重复的不再加 */
 function addTerms(text) {
