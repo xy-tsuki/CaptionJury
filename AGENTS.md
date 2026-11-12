@@ -53,7 +53,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **字幕状态**：`ok` 一致、`keep` 已确认、`fix` 已修正、`ask` 存疑、`raw` 初稿。存疑的条目用户改过文字（手动填写或采用某个写法）或点了"标为已确认"，就变成 `keep`。
 - **历史记录**：`store.list_jobs` 读每个任务的 job.json 做概要；删除只删任务目录（`store.delete_job`），不动源文件和导出的字幕，正在跑的任务不能删。
 - **逐字时间对不上时**：Qwen 漏听一段时，对齐模型会把一串字的时间堆在同一点（常是块开头的 0 秒）。连续 3 个以上长度为 0、时间相同的词当作没有时间（`sentences._collapsed`），这些字按每字 0.2 秒排在最近的有时间的字旁边，任务里加一条警告提醒检查。
-- **Qwen 漏掉的段落**：其他模型（Qwen 复核、备用模型、MOSS）的文字按句切分时，对不上任何 Qwen 句子的部分不丢，按字数估个时间，校对完插到前后两句之间，Qwen 一栏为空、标成存疑，默认采用几份写法里一致最多的那份（`sentences.place_extras`）。不让模型重听，多出来的由用户删。前后两句空隙不到 0.5 秒、少于 2 个有效字或只有语气词的不插；只有在这种语言上不可靠的模型（`models.MODELS` 里的 `weak`，目前是日语的 MiMo）听到的也不插。
+- **Qwen 漏掉的段落**：其他模型（Qwen 复核、备用模型、MOSS）的文字按句切分时，对不上任何 Qwen 句子的部分不丢，按字数估个时间，校对完插到前后两句之间，Qwen 一栏为空、标成存疑，默认采用几份写法里一致最多的那份（`sentences.place_extras`）。不让模型重听，多出来的由用户删。前后两句空隙不到 0.5 秒、少于 2 个有效字或只有语气词的不插；只有在这种语言上不可靠的模型（`models.MODELS` 里的 `weak`，目前是日语的 MiMo）听到的也不插；大部分字已在前后各两句出现过的（MOSS 会把同一段听写两遍）、只有 Whisper 听到的客套话（`WHISPER_JUNK`）不插；插入的段落最长 6 秒。
 - **校对 AI 的两种方式**：设置里的 `proof_mode` 是 `api`（服务商接口）或 `agent`（复制给 Agent）。
   - 接口方式：`proof_provider` 选服务商，`proof_url`、`proof_model` 是地址和模型；模型列表从接口的 `GET /models` 取。有的接口不认 `response_format`、`temperature` 或 `max_tokens`，报错时去掉那个参数重试，并记住（`Chat.drop`）。密钥按服务商分开保存：DeepSeek 沿用原来的 `deepseek.key`，其他在 `keys\<服务商>.key`。旧设置里的 `deepseek_url` / `deepseek_model` 读设置时改名。
   - Agent 方式：流水线线程停在 `Queue._wait_agent`，任务状态里有 `current["agent"]`（`k` 每次不同，`step` 是 `outline` 或 `proof`）；进度页拿 `agent_prompt` 显示提示词，用户粘贴后 `agent_submit` 先在 app 里解析和检查格式，不对直接告诉用户，对了才交给流水线。全文一次给完（不分批），结构不对的条目不追问、直接丢掉；可以跳过大纲或校对。等粘贴的时间不计入速度统计。
@@ -61,7 +61,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **任务词库**：新建页的词库框只对这次转写生效，`Queue._one` 把它并进 `cfg["glossary"]`（设置里的术语表），所以 Qwen 提示、大纲、校对和校验都会用到；任务里记成 `job["terms"]`。词库可以导入多个 txt（首尾相连）、保存成 txt，也可以在 `#terms` 页让 AI 生成（`deepseek.terms_prompt` / `make_terms`，Agent 方式要求回纯词表，`clean_terms` 去掉编号和重复）。
 - **源文件名是专有名词的依据**：文件名（不含扩展名）作为 `title` 交给大纲和校对，里面常有主播名、作品名；校验修改时文件名和术语表里的字算作有依据。
 - **大纲放在备用模型之后**：大纲的输入除了 Qwen 的文字，还附上备用模型和 MOSS 写法不同的地方，便于认出专有名词；找到的词作为提示交给 Qwen 复核。
-- **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。
+- **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。提示最多 `HINT_MAX`（40）个词：试过近 300 个词，Qwen 并没有因此写对，反而带偏读音相近的话；完整词库只交给 AI。
 - **模型下载**：每个文件有三个来源：Hugging Face 原始仓库、hf-mirror（中国大陆镜像）、本项目 GitHub Release（发布附件）备份 `models-v1`。先下到 `.part`，大小和 SHA-256 都对上才改名成正式文件，所以半截文件不会被当成已安装。
 - **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\Tingxie`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。
 - **首次运行引导**：运行库或必装模型缺一个，启动时就进 `#setup` 页。运行库从 CrispASR 官方 Release 下载 zip（`models.RUNTIMES`，固定版本和 SHA-256），按 `nvidia-smi` 查到的驱动版本推荐 CUDA（驱动 580 以上）或 Vulkan。
