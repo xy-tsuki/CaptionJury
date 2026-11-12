@@ -36,12 +36,12 @@ MODELS = {
         "desc": "区分说话人，顺带写出一份文字供校对参考。",
     },
     "mimo": {
-        "label": "MiMo-V2.5-ASR", "short": "MiMo", "role": "backup", "langs": ("zh",),
+        "label": "MiMo-V2.5-ASR", "short": "MiMo", "role": "backup", "langs": ("zh", "ja"),
         "files": {"mimo_model": _f(r"MiMo-V2.5-ASR\mimo-asr-q4_k.gguf", "cstr/mimo-asr-GGUF", 4517988832,
                                  "12dbc7cc7a20c7add6ff00bf8b12bca1c46304e0100a5c5a6e74bdecfc57a306"),
                   "mimo_codec": _f(r"MiMo-V2.5-ASR\mimo-tokenizer-q4_k.gguf", "cstr/mimo-tokenizer-GGUF", 395594656,
                                  "3f3a903b10294ead4ef6a4afec035639fd2113b1d307d42f649a97cc85670e3f")},
-        "desc": "中文备用。识别质量不错但很慢，偶尔漏掉一段开头的话。",
+        "desc": "中文备用，识别质量不错但很慢，偶尔漏掉一段开头的话。也能听日语，但日语里的汉字会写成简体字形，准确率不如 Whisper。",
     },
     "whisper": {
         "label": "Whisper large-v3", "short": "Whisper", "role": "backup", "langs": ("zh", "ja"),

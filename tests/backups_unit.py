@@ -37,7 +37,8 @@ assert [s["mimo"] for s in grp] == ["他有两种零重力呀", "还有一种是
 # Picking: only installed models that know the language, in a fixed order.
 cfg = {k: __file__ for m in models.MODELS.values() for k in m["files"]}  # every file "exists"
 assert models.backups_for(dict(cfg, backups={"zh": ["whisper", "mimo"]}), "zh") == ["mimo", "whisper"]
-assert models.backups_for(dict(cfg, backups={"ja": ["mimo", "whisper"]}), "ja") == ["whisper"]  # MiMo knows no Japanese
+assert models.backups_for(dict(cfg, backups={"ja": ["mimo", "whisper"]}), "ja") == ["mimo", "whisper"]
+assert models.backups_for(dict(cfg, backups={"ja": ["mimo"]}), "zh") == []  # 只为日语勾选时不用于中文
 assert models.backups_for(dict(cfg, whisper_model="missing.bin", backups={"zh": ["whisper"]}), "zh") == []
 assert models.backups_for(dict(cfg, backups={}), "ja") == ["whisper"]  # nothing picked yet: the defaults
 

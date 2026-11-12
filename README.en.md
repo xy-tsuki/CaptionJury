@@ -9,7 +9,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 ## Features
 
 - **Mixed Chinese and Japanese**: the main model, Qwen3-ASR 1.7B, handles sentences that switch between the two languages. A forced-alignment model times every character, and sentences are split at punctuation and pauses.
-- **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
+- **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper and MiMo for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
 - **AI accuracy mode** (optional): DeepSeek writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and DeepSeek then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
 - **Speaker labels** (optional): MOSS-Transcribe-Diarize tells speakers apart and labels each subtitle.
 - **Nothing Qwen missed is dropped**: passages that other models heard but Qwen did not are listed as uncertain subtitles, which you can delete if they are wrong.

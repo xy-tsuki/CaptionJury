@@ -7,7 +7,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - Python 3.11，界面用 pywebview（WebView2 窗口）加一个本机 HTTP 服务；前端是原生 HTML / CSS / JS，没有构建步骤。
 - 语音识别通过 CrispASR 0.8.50（ggml，CUDA 13 / Vulkan 两个版本）的命令行调用：
   - 主模型 Qwen3-ASR 1.7B q8_0，配 Qwen3-ForcedAligner 0.6B 出字级时间戳；
-  - 备用模型（用户按语言勾选，可多选）：MiMo-V2.5-ASR q4_k（中文）、Whisper large-v3 q5_0（中日）。Parakeet CTC 1.1B ja 试过，日语字错率约 46%，已去掉（见 decisions）；
+  - 备用模型（用户按语言勾选，可多选）：MiMo-V2.5-ASR q4_k（中日，日语较弱：汉字写成简体字形，字错率约 59%，Whisper 约 17%）、Whisper large-v3 q5_0（中日）。Parakeet CTC 1.1B ja 试过，日语字错率约 46%，已去掉（见 decisions）；
   - 说话人区分：MOSS-Transcribe-Diarize 0.9B q4_k。
 - 校对：DeepSeek API（默认 flash 模型），用 httpx 直接调用。
 - 音频处理：ffmpeg。
