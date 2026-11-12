@@ -459,6 +459,10 @@ def spread(text, t0, t1):
 
 EXTRA_GAP = 0.5  # 前后两句之间的空隙比这短，多出来的文字多半是对齐误差，不单独展示
 EXTRA_MIN_LEN = 0.3  # 插进去以后至少要有这么长
+EXTRA_MAX_LEN = 6.0  # 最多这么长：没有逐字时间的一段按块铺开时，可能铺满几十秒的静音
+EXTRA_DUP = 0.6  # 这么多的字已经在前后几句里出现过时，当作重复（MOSS 会把同一段听写两遍）
+EXTRA_NEAR = 2  # 查重时看前后各几句
+WHISPER_JUNK = ("ありがとうございました", "ご視聴", "チャンネル登録")  # Whisper 在没人说话时爱编的句子
 EXTRA_WHY = "Qwen 没有识别出这段，这是其他模型听到的写法。用不上可以删掉。"
 EXTRA_ORDER = ("qwen2",) + models.BACKUPS + ("moss",)  # 几份写法都不一致时，默认文字按这个顺序取
 
@@ -488,11 +492,31 @@ def _pick(texts):
     return texts[max(order, key=lambda f: (sum(plain[g] == plain[f] for g in order), -order.index(f)))]
 
 
+def _repeats_neighbors(texts, segs, t):
+    """几份写法都大部分出现在时间 t 前后几句的某份文字里时为 True：多半是别的模型把旁边的话又听写了一遍。"""
+    plain = lambda x: "".join(c for c in (x or "") if c not in SKIP and not c.isspace())
+    i = next((k for k, s in enumerate(segs) if s["a"] > t), len(segs))
+    near = segs[max(0, i - EXTRA_NEAR):i + EXTRA_NEAR]
+    hay = "".join(plain(s.get(f)) for s in near for f in ("text", "qwen") + OTHERS)
+    if not hay:
+        return False
+    for text in texts:
+        p = plain(text)
+        if not p:
+            continue
+        m = difflib.SequenceMatcher(None, p, hay, autojunk=False)
+        # 只算连着 2 个字以上的匹配：零散的单字在几百字里总能对上，算进去会把真漏掉的话也当成重复
+        if sum(b.size for b in m.get_matching_blocks() if b.size >= 2) < len(p) * EXTRA_DUP:
+            return False
+    return True
+
+
 def place_extras(segs, extras):
     """把 Qwen 没识别出、其他模型听到的段落插成存疑字幕，重新编号后返回全部句子。
 
     extras 是 {"a", "b", "lang", "field", "text"}；时间重叠的合成一条，每个模型的写法放在各自的字段里。
-    只有在这种语言上不可靠的模型（models 里的 weak，如日语的 MiMo）听到的段落不插。
+    这些不插：只有在这种语言上不可靠的模型（models 里的 weak，如日语的 MiMo）听到的；
+    大部分字已经在前后几句里出现过的（重复）；只有 Whisper 听到、是它常编的客套话的。
     """
     if not extras:
         return segs
@@ -509,13 +533,17 @@ def place_extras(segs, extras):
     for c in clusters:
         if all(c["lang"] in models.MODELS.get(f, {}).get("weak", ()) for f in c["texts"]):
             continue  # 只有在这种语言上不可靠的模型听到，多半是乱字
+        texts = {f: "".join(ts) for f, ts in c["texts"].items()}
+        if list(texts) == ["whisper"] and any(j in texts["whisper"] for j in WHISPER_JUNK):
+            continue
+        if _repeats_neighbors(texts.values(), segs, c["a"]):
+            continue
         prev = next((s for s in reversed(segs) if s["a"] <= c["a"]), None)
         nxt = next((s for s in segs if s["a"] > c["a"]), None)
         a = max(c["a"], prev.get("spoken_end", prev["b"]) if prev else 0.0)
-        b = min(c["b"], nxt["a"]) if nxt else c["b"]
+        b = min(c["b"], nxt["a"], a + EXTRA_MAX_LEN) if nxt else min(c["b"], a + EXTRA_MAX_LEN)
         if b - a < EXTRA_MIN_LEN:
             continue
-        texts = {f: "".join(ts) for f, ts in c["texts"].items()}
         new.append({
             "id": 0, "a": a, "b": b, "spoken_end": max(a, b - TAIL), "lang": c["lang"], "qwen": "", "text": _pick(texts),
             "status": "ask", "why": EXTRA_WHY, "chunk": 0, "span": [0, 0], "times": [], "speaker": "",
