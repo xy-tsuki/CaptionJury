@@ -149,6 +149,8 @@ assert deepseek.clean_terms("人物：\n1. 神楽めあ\n- 懲役太郎\n* \"香
 # 生成词库的提示词：接口方式要 JSON，Agent 方式要纯词表，都带上用户填的信息和文件名
 system, payload = deepseek.terms_prompt({"topic": "葬礼杂谈", "people": "神楽めあ", "files": ["a【神楽めあ】.mp4"]})
 assert "JSON" in system and payload["涉及的人物和团体"] == "神楽めあ" and payload["files"] == ["a【神楽めあ】.mp4"]
+assert payload["language"] == "中文和日语混说" and deepseek.terms_prompt({"lang": "ja"})[1]["language"] == "日语"
+assert "全部成员" in system and "最多 40" not in system
 text = deepseek.terms_prompt({"topic": "葬礼杂谈"}, agent=True)
 assert isinstance(text, str) and "每行一个词" in text and "葬礼杂谈" in text
 

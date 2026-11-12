@@ -253,7 +253,7 @@ function bindTerms() {
 
 /* AI 生成词库：二级页面，从新建页进入 */
 function termInfo() {
-  return { topic: S.tf.topic, field: S.tf.field, people: S.tf.people, files: S.tf.files ? S.files.map((f) => f.name) : [] };
+  return { topic: S.tf.topic, field: S.tf.field, people: S.tf.people, lang: S.lang, files: S.tf.files ? S.files.map((f) => f.name) : [] };
 }
 
 function renderTerms() {
@@ -264,14 +264,14 @@ function renderTerms() {
   <main class="t-page">
     <div class="t-head"><a class="btn ghost" href="#new">← 返回新建</a></div>
     <div class="t-main">
-      <div><h1>AI 生成词库</h1><p class="desc">说说视频讲什么、有谁出场，AI 会列出可能说到的人名、团体、作品名和圈内用语，填进新建页的词库。写得越具体，词越准；拿不准的地方留空就行。</p></div>
-      <label class="lab"><span>视频主题和大致内容</span><textarea class="field" data-tf="topic" rows="4" placeholder="例如：VTuber 杂谈直播的切片，聊自己的葬礼想怎么办">${esc(f.topic)}</textarea></label>
-      <label class="lab"><span>涉及的领域</span><input class="field" data-tf="field" value="${esc(f.field)}" placeholder="例如：VTuber、日本丧葬习俗"></label>
-      <label class="lab"><span>涉及的人物和团体</span><textarea class="field" data-tf="people" rows="3" placeholder="例如：主播名、提到的其他主播、所属事务所">${esc(f.people)}</textarea></label>
+      <div><h1>AI 生成词库</h1><p class="desc">说说视频讲什么、有谁出场，AI 会列出可能说到的人名、团体、作品名和圈内用语，填进新建页的词库。写得越具体，词越准；拿不准的地方留空就行。按新建页选的识别语言（${esc(LANGS[S.lang] || '')}）写。</p></div>
+      <label class="lab"><span>视频主题和大致内容</span><textarea class="field" data-tf="topic" rows="4" placeholder="例如：游戏实况录播，边玩新出的恐怖游戏边和观众聊天">${esc(f.topic)}</textarea></label>
+      <label class="lab"><span>涉及的领域</span><input class="field" data-tf="field" value="${esc(f.field)}" placeholder="例如：游戏实况、恐怖游戏"></label>
+      <label class="lab"><span>涉及的人物和团体</span><textarea class="field" data-tf="people" rows="3" placeholder="例如：主播、嘉宾、提到的人；写上团体名时，AI 会列出全部成员">${esc(f.people)}</textarea></label>
       ${names.length ? `<label class="check"><input type="checkbox" id="tffiles" ${f.files ? 'checked' : ''}><span>附上新建页的文件名（${names.length} 个），文件名里常有主播名和作品名</span></label>` : ''}
       <div class="t-ways">
         <section class="t-way">
-          <h3>用 ${esc(agentMode() ? '设置里的服务商接口' : proofName())} 生成</h3>
+          <h3>${agentMode() ? '用服务商接口生成' : `用 ${esc(proofName())} 生成`}</h3>
           <p class="dim">生成完自动回到新建页，词接在词库框后面。只发送上面填的文字和文件名。</p>
           ${hasKey ? '' : '<p class="warn">还没有保存服务商的密钥。到设置里填写，或者用复制给 Agent 的方式。</p>'}
           <div class="ag-bar"><button class="btn solid" type="button" id="tfapi" ${hasKey ? '' : 'disabled'}>生成词库</button><span class="faint small" id="tfst"></span></div>
