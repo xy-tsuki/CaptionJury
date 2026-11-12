@@ -178,6 +178,7 @@ function renderNew() {
   const md = (name, on) => `<span class="md${on ? '' : ' off'}"><i></i>${esc(name)}</span>`;
   const uses = {};
   for (const [l, ms] of backups) for (const m of ms) (uses[m] = uses[m] || []).push(l);
+  const flow = modeFlags(S.mode);  // 底部处理流程按当前模式实际会跑的步骤显示
   view.innerHTML = `
   <main class="m-grid">
     <section class="m-left" aria-label="文件">
@@ -219,13 +220,13 @@ function renderNew() {
       </div>
     </section>
   </main>
-  ${S.mode !== 'custom' ? '' : `<section class="flow" aria-label="处理流程">
+  <section class="flow" aria-label="处理流程">
     <div class="fs"><span class="t">提取音频</span><span class="d">FFmpeg 转成 16 kHz 单声道</span></div>
     <div class="fs wide"><span class="t">识别</span>${md('Qwen3-ASR 主识别，逐字对时、断句', true)}${md('MOSS 区分说话人', S.dia)}</div>
-    <div class="fs${S.compare ? '' : ' off'}"><span class="t">多模型对照</span>${Object.keys(uses).length ? Object.entries(uses).map(([m, ls]) => md(`${m}（${ls.join('、')}）`, S.compare)).join('') : '<span class="d">没有可用的备用模型</span>'}</div>
-    <div class="fs wide${S.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${S.opt ? `${esc(proofName())}：大纲 → Qwen 复核 → 逐句校对` : '不运行'}</span></div>
+    <div class="fs${flow.compare ? '' : ' off'}"><span class="t">多模型对照</span>${Object.keys(uses).length ? Object.entries(uses).map(([m, ls]) => md(`${m}（${ls.join('、')}）`, flow.compare)).join('') : '<span class="d">没有可用的备用模型</span>'}</div>
+    <div class="fs wide${flow.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${flow.opt ? `${esc(proofName())}：大纲 → Qwen 复核 → 逐句校对` : '不运行'}</span></div>
     <div class="fs"><span class="t">生成字幕</span><span class="d mono">${S.formats.join(' ') || '未选择格式'}</span></div>
-  </section>`}`;
+  </section>`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
   if ($('#tipnew')) $('#tipnew').onclick = () => { S.firstRun = false; renderNew(); };
   $$('[data-mode]').forEach((b) => { b.onclick = () => { S.mode = b.dataset.mode; renderNew(); }; });
