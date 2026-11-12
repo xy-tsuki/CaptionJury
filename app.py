@@ -111,13 +111,13 @@ class Api:
         return out
 
     # ---------- queue ----------
-    def start(self, paths, lang, opt, formats, diarize=False, compare=False, terms=""):
+    def start(self, paths, lang, opt, formats, diarize=False, compare=False, terms="", mode="custom"):
         cfg = store.load_config()
         if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
         if diarize and not Path(store.load_config()["moss_model"]).exists():
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
-        store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize})
+        store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize, "mode": mode})
         try:
             self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms))
         except RuntimeError as e:
@@ -352,6 +352,7 @@ class Api:
         cfg["providers"] = [{"key": k, "label": v[0], "url": v[1], "has_key": store.has_key(k)} for k, v in deepseek.PROVIDERS.items()]
         cfg["version"] = VERSION
         cfg["backups_active"] = {lang: [models.MODELS[k]["short"] for k in models.backups_for(cfg, lang)] for lang in ("zh", "ja")}
+        cfg["backups_keys"] = {lang: list(models.backups_for(cfg, lang)) for lang in ("zh", "ja")}  # 估算用时按这些键查速度
         return cfg
 
     def save_config(self, changes):

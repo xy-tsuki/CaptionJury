@@ -20,7 +20,7 @@ const I = {
   lock: svg('<rect x="3" y="7" width="10" height="6.5"/><path d="M5.2 7V5a2.8 2.8 0 015.6 0v2"/>'),
 };
 
-const S = { cfg: null, terms: '', tf: { topic: '', field: '', people: '', files: true }, files: [], lang: 'mix', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
+const S = { cfg: null, terms: '', tf: { topic: '', field: '', people: '', files: true }, files: [], lang: 'mix', mode: 'accurate', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
 const api = () => window.pywebview.api;
 const FORMATS = ['SRT', 'ASS', 'VTT', 'TXT'];
 const LANGS = { zh: '中文', ja: '日语', mix: '中文 + 日语' };
@@ -122,6 +122,29 @@ document.addEventListener('click', (e) => {  // 点菜单外面就收起
 });
 
 /* ---------- 新建 ---------- */
+/* 三种模式：快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
+const MODES = {
+  fast: ['快速', '只用主模型，最快出字幕。'],
+  accurate: ['精准', '几个模型对照，AI 逐句校对，拿不准的标出来。'],
+  custom: ['自定义', '自己选多模型对照和 AI 校对。'],
+};
+const modeFlags = (m) => (m === 'fast' ? { opt: false, compare: false } : m === 'accurate' ? { opt: true, compare: true } : { opt: S.opt, compare: S.compare });
+
+/* 按以往的速度估算这次要多久（不含等你粘贴 Agent 回复的时间）；没有记录或没加文件时返回空 */
+function estimate(m) {
+  const sp = (S.cfg && S.cfg.speed) || {};
+  const total = S.files.reduce((a, f) => a + (f.duration || 0), 0);
+  if (!total || !sp.qwen) return '';
+  const { opt, compare } = modeFlags(m);
+  let r = (sp.extract || 0) + (sp.vad || 0) + sp.qwen + (S.dia ? sp.moss || 0 : 0);
+  if (compare) {
+    const keys = new Set([['zh'], ['ja']].filter(([k]) => S.lang === k || S.lang === 'mix').flatMap(([k]) => ((S.cfg.backups_keys || {})[k] || [])));
+    for (const k of keys) r += sp[k] || 0;
+  }
+  if (opt) r += (sp.qwen2 || 0) + (agentMode() ? 0 : sp.deepseek || 0);
+  const sec = total * r;
+  return sec < 60 ? '预计不到 1 分钟' : `预计约 ${Math.round(sec / 60)} 分钟`;
+}
 /* 这次会跑的备用模型：[[语言名, [模型名...]], ...]，按设置里的勾选和已安装的模型 */
 function activeBackups() {
   const on = (S.cfg && S.cfg.backups_active) || {};
@@ -154,17 +177,19 @@ function renderNew() {
     <section class="m-right" aria-label="转写设置">
       <div class="m-form">
         <div class="m-sec"><span class="lbl">识别语言</span><div class="seg" role="group" aria-label="识别语言">${seg}</div></div>
-        <div class="m-sec"><span class="lbl">处理</span>
-          <div>
+        <div class="m-sec"><span class="lbl">模式</span>
+          <div class="modes" role="radiogroup" aria-label="模式">${Object.entries(MODES).map(([id, [name, desc]]) => `<button type="button" class="mode${S.mode === id ? ' on' : ''}" role="radio" aria-checked="${S.mode === id}" data-mode="${id}"><b>${name}</b><span>${desc}</span>${estimate(id) ? `<em class="mono">${estimate(id)}</em>` : ''}</button>`).join('')}</div>
+          ${modeWarn()}
+          ${S.mode === 'custom' ? `<div>
             <label class="opt check"><input type="checkbox" id="compare" ${S.compare ? 'checked' : ''}><b>多模型对照</b>
               <p>${compareText}。校对页逐句列出各模型的写法，可以一键采用。</p>
               ${S.compare && !anyBackup ? '<span class="warn">没有可用的备用模型，到设置里下载并勾选。</span>' : ''}</label>
             <label class="opt check"><input type="checkbox" id="opt" ${S.opt ? 'checked' : ''}><b>AI 精度优化</b>
               <p>${esc(proofName())} 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后对照各份结果逐句校对。只发送文字。${agentMode() ? '跑到这一步时会暂停，在进度页复制提示词给 Agent，再把回复粘贴回来。' : ''}</p>
               ${S.opt && S.cfg && !agentMode() && !S.cfg.has_key ? `<span class="warn">还没有保存 ${esc(proofName())} 的密钥，到设置里填写，或者改用复制给 Agent 的方式。</span>` : ''}</label>
-            <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
-              <p>先用 MOSS 分出说话人，再标到每条字幕上。</p></label>
-          </div>
+          </div>` : ''}
+          <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
+            <p>分出是谁在说话，标到每条字幕上。适合访谈、对谈和会议；一个人讲的视频不用开。</p></label>
         </div>
         <div class="m-sec"><span class="lbl">字幕格式</span><div class="fmts" role="group" aria-label="字幕格式">${fmts}</div><span class="faint small">保存在源文件所在的文件夹。</span></div>
         <div class="m-sec"><label class="lbl" for="terms">词库导入</label>
@@ -179,16 +204,17 @@ function renderNew() {
       </div>
     </section>
   </main>
-  <section class="flow" aria-label="处理流程">
+  ${S.mode !== 'custom' ? '' : `<section class="flow" aria-label="处理流程">
     <div class="fs"><span class="t">提取音频</span><span class="d">FFmpeg 转成 16 kHz 单声道</span></div>
     <div class="fs wide"><span class="t">识别</span>${md('Qwen3-ASR 主识别，逐字对时、断句', true)}${md('MOSS 区分说话人', S.dia)}</div>
     <div class="fs${S.compare ? '' : ' off'}"><span class="t">多模型对照</span>${Object.keys(uses).length ? Object.entries(uses).map(([m, ls]) => md(`${m}（${ls.join('、')}）`, S.compare)).join('') : '<span class="d">没有可用的备用模型</span>'}</div>
     <div class="fs wide${S.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${S.opt ? `${esc(proofName())}：大纲 → Qwen 复核 → 逐句校对` : '不运行'}</span></div>
     <div class="fs"><span class="t">生成字幕</span><span class="d mono">${S.formats.join(' ') || '未选择格式'}</span></div>
-  </section>`;
+  </section>`}`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
-  $('#opt').onchange = (e) => { S.opt = e.target.checked; renderNew(); };
-  $('#compare').onchange = (e) => { S.compare = e.target.checked; renderNew(); };
+  $$('[data-mode]').forEach((b) => { b.onclick = () => { S.mode = b.dataset.mode; renderNew(); }; });
+  if ($('#opt')) $('#opt').onchange = (e) => { S.opt = e.target.checked; renderNew(); };
+  if ($('#compare')) $('#compare').onchange = (e) => { S.compare = e.target.checked; renderNew(); };
   $('#dia').onchange = (e) => { S.dia = e.target.checked; renderNew(); };
   $$('[data-fmt]').forEach((b) => { b.onclick = () => { const f = b.dataset.fmt; S.formats = S.formats.includes(f) ? S.formats.filter((x) => x !== f) : FORMATS.filter((x) => x === f || S.formats.includes(x)); renderNew(); }; });
   $$('[data-rm]').forEach((b) => { b.onclick = () => { S.files.splice(+b.dataset.rm, 1); renderNew(); }; });
@@ -201,6 +227,16 @@ function renderNew() {
   drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); };  // 文件路径由 Python 那边收到后推给 poll
 }
 
+/* 选了的模式缺东西时，开始转写前就说清楚 */
+function modeWarn() {
+  const { opt, compare } = modeFlags(S.mode);
+  const out = [];
+  if (opt && S.cfg && !agentMode() && !S.cfg.has_key) out.push(`AI 校对需要先设置：<a href="#settings">到设置里</a>填 ${esc(proofName())} 的 API 密钥，或者改用“复制给 Agent”（用你订阅的 AI，不需要密钥）。`);
+  if (compare && !activeBackups().some(([, ms]) => ms.length)) out.push('没有可用的备用模型，只会用主模型识别。<a href="#settings">到设置里</a>下载并勾选。');
+  if (opt && agentMode() && S.mode !== 'custom') out.push('跑到 AI 校对时会暂停，在进度页把提示词复制给你的 Agent，再把回复粘贴回来。');
+  return out.map((x) => `<span class="warn">${x}</span>`).join('');
+}
+
 function addFiles(list) {
   const have = new Set(S.files.map((f) => f.path));
   S.files.push(...list.filter((f) => !have.has(f.path)));
@@ -210,7 +246,8 @@ function addFiles(list) {
 async function start() {
   if (!S.files.length) return toast('请先添加文件');
   if (!S.formats.length) return toast('请至少选择一种字幕格式');
-  const r = await api().start(S.files.map((f) => f.path), S.lang, S.opt, S.formats, S.dia, S.compare, S.terms);
+  const { opt, compare } = modeFlags(S.mode);
+  const r = await api().start(S.files.map((f) => f.path), S.lang, opt, S.formats, S.dia, compare, S.terms, S.mode);
   if (r.error) return toast(r.error);
   S.files = [];
   location.hash = '#progress';
@@ -1052,7 +1089,7 @@ async function poll() {
 
 async function boot() {
   S.cfg = await api().config();
-  S.lang = S.cfg.lang; S.opt = S.cfg.opt; S.compare = S.cfg.compare; S.dia = S.cfg.diarize; S.formats = S.cfg.formats;
+  S.lang = S.cfg.lang; S.mode = S.cfg.mode || 'accurate'; S.opt = S.cfg.opt; S.compare = S.cfg.compare; S.dia = S.cfg.diarize; S.formats = S.cfg.formats;
   showSys(S.cfg.gpu_backend);
   window.addEventListener('hashchange', route);
   const si = await api().setup_info();  // 运行库或必装模型缺了，先进引导页

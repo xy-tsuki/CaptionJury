@@ -33,6 +33,8 @@ DEFAULTS = {
     "proof_model": "deepseek-flash",
     "glossary": "",
     "lang": "mix",
+    # 新建页的模式：fast 只用主模型；accurate 多模型对照 + AI 校对；custom 自己选 opt 和 compare
+    "mode": "accurate",
     "opt": True,
     "compare": True,
     "diarize": False,
@@ -54,6 +56,9 @@ def load_config():
         for old, new in (("deepseek_url", "proof_url"), ("deepseek_model", "proof_model")):
             if old in saved and new not in saved:
                 saved[new] = saved[old]
+        if "mode" not in saved and ("opt" in saved or "compare" in saved):  # 有模式之前的设置：按两个开关推出来
+            opt, compare = saved.get("opt", True), saved.get("compare", saved.get("opt", True))
+            saved["mode"] = "accurate" if opt and compare else "fast" if not opt and not compare else "custom"
         cfg.update(saved)
     # 去掉已经不支持的备用模型（Parakeet 在 2026-11-12 去掉了）；某种语言只勾了它的，改回默认
     backups = {}

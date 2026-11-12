@@ -53,6 +53,12 @@ store.CONFIG.write_text(json.dumps({"backups": {"zh": ["mimo"], "ja": ["parakeet
 assert store.load_config()["backups"] == {"zh": ["mimo"], "ja": ["whisper"]}
 store.CONFIG.write_text(json.dumps({"backups": {"zh": [], "ja": ["whisper", "parakeet"]}}), encoding="utf-8")
 assert store.load_config()["backups"] == {"zh": [], "ja": ["whisper"]}
+# 有模式之前的设置：按两个开关推出模式；新设置默认精准；已有的模式不动
+for saved, mode in (({"opt": True, "compare": True}, "accurate"), ({"opt": False, "compare": False}, "fast"),
+                    ({"opt": True, "compare": False}, "custom"), ({"opt": False}, "fast"), ({}, "accurate"),
+                    ({"opt": False, "compare": False, "mode": "accurate"}, "accurate")):
+    store.CONFIG.write_text(json.dumps(saved), encoding="utf-8")
+    assert store.load_config()["mode"] == mode, (saved, store.load_config()["mode"])
 
 # New sentences carry an empty field for every transcript.
 assert all(k in sentences.OTHERS for k in models.BACKUPS)
