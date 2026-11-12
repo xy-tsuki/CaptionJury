@@ -177,7 +177,7 @@ class Queue:
             "id": jid, "source": str(src), "name": src.name, "created": time.time(),
             "lang": lang, "opt": opt, "compare": compare, "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
         }
-        self.state["current"] = {"name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
+        self.state["current"] = {"id": jid, "name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]
         # Which backup models hear which language's sentences, as the user picked them.
         serves = {}

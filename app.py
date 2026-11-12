@@ -155,6 +155,13 @@ class Api:
     def jobs(self):
         return store.list_jobs()
 
+    def delete_job(self, jid):
+        c = self._queue.state.get("current") or {}
+        if self._queue.state["running"] and c.get("id") == jid:
+            return {"error": "这个任务正在运行，结束后才能删除"}
+        store.delete_job(jid)
+        return {}
+
     def job(self, jid):
         j = store.load_job(jid)
         peaks = store.JOBS / jid / "peaks.json"
@@ -242,12 +249,18 @@ class Api:
 
     def export(self, jid, formats):
         j = store.load_job(jid)
-        written = subtitles.export(j, formats)
+        try:
+            written = subtitles.export(j, formats)
+        except OSError as e:  # 源文件所在的文件夹被删了、移走了或没有写权限
+            return {"error": f"写不进源文件所在的文件夹：{e.strerror or e}"}
         store.save_job(j)
         return written
 
     def reveal(self, path):
+        if not Path(path).exists():
+            return {"error": "找不到这个文件，可能已经移走或删除"}
         subprocess.Popen(["explorer", "/select,", path])
+        return {}
 
     # ---------- settings ----------
     def config(self):

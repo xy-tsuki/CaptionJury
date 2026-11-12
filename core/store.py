@@ -1,6 +1,7 @@
 """Local settings, DPAPI-encrypted API key, and job files."""
 import json
 import os
+import shutil
 import sys
 import uuid
 from pathlib import Path
@@ -99,11 +100,33 @@ def load_job(jid):
 
 
 def list_jobs():
+    """历史记录：每个任务的概要，新的在前。"""
     _ensure()
     out = []
     for d in JOBS.iterdir():
         f = d / "job.json"
-        if f.exists():
+        if not f.exists():
+            continue
+        try:
             j = json.loads(f.read_text(encoding="utf-8"))
-            out.append({"id": j["id"], "name": j["name"], "created": j["created"], "count": len(j.get("segments", []))})
+        except (OSError, ValueError):  # 正在写或已损坏的任务文件跳过
+            continue
+        segs = j.get("segments", [])
+        out.append({
+            "id": j["id"], "name": j["name"], "source": j.get("source", ""), "created": j["created"],
+            "duration": j.get("duration", 0), "lang": j.get("lang", ""), "opt": bool(j.get("opt")),
+            "compare": bool(j.get("compare", j.get("opt"))), "speakers": len(j.get("speakers") or {}),
+            "count": len(segs), "fix": sum(s.get("status") == "fix" for s in segs),
+            "ask": sum(s.get("status") == "ask" for s in segs),
+            "done": "written" in j, "written": j.get("written", []),
+        })
     return sorted(out, key=lambda x: x["created"], reverse=True)
+
+
+def delete_job(jid):
+    """删掉一个任务的目录（任务文件、音频和各模型的原始输出），不动源文件和导出的字幕。"""
+    if not jid or not all(c in "0123456789abcdef" for c in jid):
+        raise ValueError("任务编号不对")
+    d = JOBS / jid
+    if d.is_dir():
+        shutil.rmtree(d)
