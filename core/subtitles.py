@@ -69,6 +69,8 @@ def _score(text, times, p, n):
     elif kp == kc == "hira" and prev not in JA_PARTICLES and prev not in "てねよ":
         # 两个平假名中间多半是一个词的中间；前一个是“う、る、た、い”这类词尾、后面又不是助词时，可能是词的分界
         s -= 1 if prev in "うるたい" and cur not in "でてじゃよねなのかけっ" else 2.5
+    if cur == "さ" and kp == "hira" and p + 1 < n and _kind(text[p + 1]) in ("han", "kata"):
+        s -= 6  # “つーかさ別にさ見たくない”里的“さ”是语气词，跟着前面的话
     if cur in "ねよな" and kp == "hira":
         s -= 6 if cur in "ねよ" else 2  # 句末的“ね、よ、な”跟着前面的话，“ね、よ”几乎不会放在条首
     if any(text.startswith(w, p - k) for w in NO_SPLIT for k in range(1, len(w)) if p - k >= 0):
