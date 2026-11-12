@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-A Windows desktop tool that turns video or audio with mixed Chinese and Japanese speech into timed subtitles (SRT / ASS / VTT / TXT). All speech recognition runs on your own GPU, so audio and video never leave your computer. Optionally, DeepSeek proofreads the text by comparing several transcripts.
+A Windows desktop tool that turns video or audio with mixed Chinese and Japanese speech into timed subtitles (SRT / ASS / VTT / TXT). All speech recognition runs on your own GPU, so audio and video never leave your computer. Optionally, an AI proofreads the text by comparing several transcripts: through the API of DeepSeek or another provider, or by copying a prompt to the Claude, ChatGPT or similar subscription you already have.
 
 > The name is provisional. This is a 0.x release; the interface and features will still change. The app's interface is in Chinese.
 
@@ -10,7 +10,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 - **Mixed Chinese and Japanese**: the main model, Qwen3-ASR 1.7B, handles sentences that switch between the two languages. A forced-alignment model times every character, and sentences are split at punctuation and pauses.
 - **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper and MiMo for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
-- **AI accuracy mode** (optional): DeepSeek writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and DeepSeek then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
+- **AI accuracy mode** (optional): the AI writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and the AI then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
 - **Speaker labels** (optional): MOSS-Transcribe-Diarize tells speakers apart and labels each subtitle.
 - **Nothing Qwen missed is dropped**: passages that other models heard but Qwen did not are listed as uncertain subtitles, which you can delete if they are wrong.
 - **Review page**: compare each model's version line by line and adopt one with a click; edit text, nudge in and out points, play a single line, delete (with undo), find and replace, then export. An overview strip above the waveform marks where corrected and uncertain lines are in the whole recording.
@@ -36,7 +36,12 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. An uncertain line becomes "confirmed" once you edit it or click "mark as confirmed" (标为已确认). Click "Export subtitles" (导出字幕) and pick the formats when done.
 4. **History** (历史): past results, which you can reopen for review, export, show in Explorer, or delete (only the saved result is deleted; the source file and exported subtitles stay).
 
-AI accuracy mode needs DeepSeek: enter a DeepSeek API key in Settings (设置). The key is encrypted with Windows DPAPI, so only your Windows account can decrypt it. Only the recognised text is sent to DeepSeek, never the audio or video.
+For AI accuracy mode, pick one of two ways in Settings → Proofreading AI (设置 → 校对 AI):
+
+- **Provider API** (服务商接口): choose a provider (DeepSeek, OpenAI, Qwen / DashScope, Kimi, Zhipu GLM, SiliconFlow, OpenRouter, Gemini, Claude, or a custom OpenAI-compatible address), enter its API key, and pick a model from the list the API returns. Keys are encrypted with Windows DPAPI, so only your Windows account can decrypt them, and each provider's key is stored separately.
+- **Copy to an Agent** (复制给 Agent): for when you have a Claude, ChatGPT, Gemini or similar subscription but no API key. The job pauses at this step and the Progress page shows a prompt; copy it to your Agent, paste its whole reply back, and the program picks out the result. Each file takes two round trips (outline, then proofreading), and either can be skipped.
+
+Either way, only the recognised text is sent, never the audio or video.
 
 ## Where data is kept
 
