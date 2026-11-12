@@ -92,12 +92,12 @@ function exportMenu(jid, small = true) {
       <p>写在源文件所在的文件夹（写不进去时存到"文档\听写字幕"），再次导出会覆盖上次导出的文件。</p>
       <button class="btn sm solid" type="button" data-xgo>导出</button>
       <details class="howto"><summary>怎么导入剪辑软件</summary>
-        <p>都用 SRT：</p>
+        <p>都用 SRT，菜单名称以你的软件版本为准：</p>
         <ul>
-          <li>剪映：文本 → 本地字幕 → 导入字幕</li>
-          <li>Premiere：文件 → 导入，再把 SRT 拖到时间线上</li>
-          <li>达芬奇：文件 → 导入 → 字幕，再拖到时间线上</li>
-          <li>Final Cut：文件 → 导入 → 字幕</li>
+          <li>剪映专业版：在「文本」面板（有的版本在「字幕」或「AI 字幕」）里点「导入本地字幕」，再拖到轨道上</li>
+          <li>Premiere：文件 → 导入，再把 SRT 从项目面板拖到时间线上</li>
+          <li>达芬奇：剪辑页 文件 → 导入 → 字幕，再从媒体池拖到时间线上</li>
+          <li>Final Cut（10.4.1 以上）：先打开项目，文件 → 导入 → 字幕</li>
         </ul>
       </details>
     </div>
