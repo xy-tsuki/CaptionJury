@@ -553,10 +553,10 @@ class Queue:
         try:
             chat = self._chat(cfg, "outline")
             if isinstance(chat, _Agent):
-                job["outline"], terms = deepseek.outline(cfg, chat, segs)
+                job["outline"], terms = deepseek.outline(cfg, chat, segs, Path(job["name"]).stem)
             else:
                 with chat:
-                    job["outline"], terms = deepseek.outline(cfg, chat, segs)
+                    job["outline"], terms = deepseek.outline(cfg, chat, segs, Path(job["name"]).stem)
         except Skipped:  # 跳过大纲：校对照常做，只是没有大纲和术语提示
             job["outline"] = ""
             t.set("deepseek", 40, "等待校对")
@@ -621,10 +621,10 @@ class Queue:
         try:
             chat = self._chat(cfg, "proof")
             if isinstance(chat, _Agent):
-                items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"])
+                items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"], Path(job["name"]).stem)
             else:
                 with chat:
-                    items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"])
+                    items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"], Path(job["name"]).stem)
         except Skipped:
             job["warnings"].append("跳过了 AI 校对，保留的是 Qwen 的识别结果")
             t.finish("deepseek", "已跳过", learn=False)

@@ -21,12 +21,13 @@ NOVEL_MAX = 0.2  # share of new characters no transcript has before an edit is m
 SIMILAR_MIN = 0.5  # an edit this unlike every transcript is marked as doubtful
 
 OUTLINE_SYSTEM = """你是字幕校对的助手。输入是一段中日双语音视频的完整语音识别稿。语音识别只听声音，常把词写成读音相近的别字，所以稿中的专有名词和不通顺的地方都不可靠。
+title 是视频或音频的文件名（可能为空），常含主播名、作品名和话题，是专有名词写法最可靠的依据；里面的编号、日期、平台后缀不用管。
 transcript 按顺序每项一句：是字符串时，就是主识别模型 Qwen3-ASR 的结果（其他模型和它一致或没有结果）；是对象时，primary 是 Qwen3-ASR 的结果，others 是其他模型听到的不同写法，键是模型名（MiMo 中文较准，日语里的汉字常写成简体字形，Whisper 中日都能听但偶尔会写出没说过的句子，MOSS 整体较弱但能听到轻声）。几份写法对照着看，更容易认出专有名词的正确写法。
 通读全文，先判断场景：在哪里、在做什么、有哪些人、在聊什么。然后整理后续校对要用的大纲：
 1. 场景和主题，各部分内容。
 2. 人名、地名、地标、机构、品牌、型号、作品名、专业术语的正确写法。结合场景和读音推断，例如在某地旅行时，读音相近的词很可能是当地的知名地点。
 3. 疑似听错的词：列出“原词 → 最可能的词（依据）”，依据写读音和场景。候选的读音必须和原词相近；除了专有名词，也要想到感叹语、俗语、玩笑话。拿不准就注明。
-术语表中的写法优先。
+术语表中的写法优先，其次是 title 里的写法：稿中读音和 title 里的名字相近的词（例如“かぐらめ”和 title 里的“神楽めあ”），按 title 的写法。
 另外单独列出 terms：稿中很可能出现的专有名词的正确写法，每项只写词本身，最多 40 项。只放有把握的词，它们会作为提示交给语音识别重听一遍，写错会把识别带偏。
 只输出 JSON：{"outline":"大纲正文","terms":["词1","词2"]}"""
 
@@ -38,6 +39,7 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
 - backups：其他识别模型的结果，键是模型名，可能有好几份：MiMo（中文较准；日语里的汉字常写成简体字形，按读音比较），Whisper（中日都能听，但偶尔会写出没说过的句子）。每份各算一个来源。
 - moss：说话人分离模型顺带写出的文字。整体不如 primary，但有时能听到别的模型漏掉的轻声和重叠的话。
 同一句的几份结果来自同一段声音，可以逐词对照。
+title 是视频或音频的文件名（可能为空），常含主播名、作品名和话题；读音和 title 里的名字相近的词，按 title 的写法改，可以不标 uncertain。
 全文分批校对。context_before 和 context_after 是本批前后的句子，只用来理解上下文，不要列出它们的 id，也不要改它们。
 
 先看几份结果是否一致：
@@ -60,7 +62,7 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
 硬性限制：
 - 改后的每个词，要么出现在某份识别结果里，要么和 primary 对应位置的读音相近。不能写出所有结果里都没有、读音也对不上的话，哪怕它更通顺。
 - 说得通的词和句子不要改，哪怕换一个词显得更合理；只有不改就讲不通，或多数结果都不同意 primary 时才动手。
-- 术语表的写法优先，其次是大纲和全文一致的写法。
+- 术语表的写法优先，其次是 title、大纲和全文一致的写法。
 
 文字修改范围：
 - 可以改：听错的字词、专有名词、俗语和感叹语、漏掉的半句、错误的标点、句末被截断造成的错误标点。
@@ -242,9 +244,13 @@ def glossary(cfg):
     return [g.strip() for g in cfg.get("glossary", "").splitlines() if g.strip()]
 
 
-def outline(cfg, chat, segments):
-    """返回 (大纲, 术语)：校对用的场景说明，以及交给 Qwen 复核的专有名词。chat 是 Chat 或流水线里的 Agent。"""
-    reply, _ = chat.ask(OUTLINE_SYSTEM, {"glossary": glossary(cfg), "transcript": [_outline_row(s) for s in segments]})
+def outline(cfg, chat, segments, title=""):
+    """返回 (大纲, 术语)：校对用的场景说明，以及交给 Qwen 复核的专有名词。chat 是 Chat 或流水线里的 Agent。
+
+    title 是源文件名（不含扩展名），里面常有主播名、作品名，作为专有名词的依据。
+    """
+    payload = {"title": title, "glossary": glossary(cfg), "transcript": [_outline_row(s) for s in segments]}
+    reply, _ = chat.ask(OUTLINE_SYSTEM, payload)
     terms = [str(t).strip() for t in reply.get("terms") or [] if str(t).strip()]
     return str(reply["outline"]), terms[:MAX_TERMS]
 
@@ -321,8 +327,11 @@ def structure_error(item, own, taken):
     return None
 
 
-def content_doubt(item, group):
-    """Why an edit looks unsupported by the transcripts, or None. Such edits are kept but marked doubtful for the user."""
+def content_doubt(item, group, known=""):
+    """改后的文字在各份识别结果里找不到依据时返回原因，否则 None。这类修改照样采用，但标成存疑交给用户。
+
+    known 是用户给的可靠写法（文件名、术语表），里面的字算作有依据。
+    """
     new = _plain(item.get("text", ""))
     if not new:
         return None
@@ -330,7 +339,7 @@ def content_doubt(item, group):
     texts = [_plain(t) for t in texts if t]
     if new in texts:
         return None
-    seen = set("".join(texts))
+    seen = set("".join(texts)) | set(_plain(known))
     novel = "".join(dict.fromkeys(c for c in new if c not in seen))
     best = max(difflib.SequenceMatcher(None, new, t, autojunk=False).ratio() for t in texts)
     if len(novel) > max(2, len(new) * NOVEL_MAX):
@@ -359,7 +368,7 @@ def _proof_batch(chat, base, segments, a, b):
             ids = sorted(int(i) for i in item["ids"])
             item["ids"] = ids
             taken.update(ids)
-            doubt = content_doubt(item, [own[i] for i in ids])
+            doubt = content_doubt(item, [own[i] for i in ids], base.get("title", "") + "".join(base.get("glossary") or []))
             if doubt:
                 item["uncertain"] = True
                 item["reason"] = "；".join(x for x in (str(item.get("reason") or "").strip(), doubt) if x)
@@ -374,13 +383,13 @@ def _proof_batch(chat, base, segments, a, b):
     return kept, dropped
 
 
-def proofread(cfg, chat, segments, outline_text):
+def proofread(cfg, chat, segments, outline_text, title=""):
     """Returns (items, dropped): the edits and doubts the AI found, batch by batch, and how many it could not get right.
 
     Edits that the transcripts do not support are not thrown away: they come back marked uncertain, with the reason,
     so the review page can show them next to every transcript.
     """
-    base = {"outline": outline_text, "glossary": glossary(cfg)}
+    base = {"title": title, "outline": outline_text, "glossary": glossary(cfg)}
     parts = batches(segments, chat.batch) if chat.batch else [(0, len(segments))]
     with ThreadPoolExecutor(WORKERS if chat.batch else 1) as pool:
         jobs = [pool.submit(_proof_batch, chat, base, segments, a, b) for a, b in parts]

@@ -132,3 +132,15 @@ seen.clear()
 chat.ask("s", {"a": 1})
 assert len(seen) == 1  # 第二次直接用学到的参数
 print("all passed")
+
+# 文件名交给大纲和校对：两边的输入里都有 title
+class TitleChat(FakeChat):
+    def ask(self, system, payload, history=()):
+        calls.append((payload, list(history)))
+        return ({"outline": "大纲", "terms": []} if "transcript" in payload else {"items": []}), "{}"
+
+
+calls.clear()
+deepseek.outline({}, TitleChat(), segs, "【神楽めあ】葬礼")
+deepseek.proofread({}, TitleChat(), segs, "大纲", "【神楽めあ】葬礼")
+assert all(c[0]["title"] == "【神楽めあ】葬礼" for c in calls) and len(calls) >= 2, calls

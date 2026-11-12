@@ -57,3 +57,8 @@ assert store.load_config()["backups"] == {"zh": [], "ja": ["whisper"]}
 # New sentences carry an empty field for every transcript.
 assert all(k in sentences.OTHERS for k in models.BACKUPS)
 print("all passed")
+
+# 文件名和术语表里的字算作有依据：按标题改正主播名，不因“各份结果里都没有”标存疑
+s = seg(3, "かぐらめは生前葬。", lang="ja", whisper="カグラムや正々そう")
+assert deepseek.content_doubt({"text": "神楽めあ生前葬。"}, [s]) is not None
+assert deepseek.content_doubt({"text": "神楽めあ生前葬。"}, [s], "不想办葬礼但钱还是要收的【神楽めあ】_439832152") is None
