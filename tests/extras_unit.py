@@ -104,6 +104,18 @@ assert len(sentences.place_extras([dict(s) for s in dup], [{"a": 3.5, "b": 6.0, 
 out = sentences.place_extras([dict(s) for s in dup[:1]], [{"a": 3.5, "b": 33.0, "lang": "ja", "field": "whisper", "text": "香典はもらう"}])
 assert out[1]["b"] - out[1]["a"] <= sentences.EXTRA_MAX_LEN, out[1]
 
+# 开了 AI 校对时，重复的补插段并进对得最多的那句，作为另一份写法；没重复的照常留给 place_extras
+segs2 = [dict(s) for s in dup]
+rest = sentences.absorb_repeats(segs2, [
+    {"a": 3.5, "b": 6.0, "lang": "ja", "field": "moss", "text": "大丈夫、名も方連げきょうとかしなくても私は成仏する。"},
+    {"a": 9.5, "b": 10.5, "lang": "ja", "field": "whisper", "text": "香典はもらう"},
+])
+assert segs2[0]["alts"] == [{"field": "moss", "text": "大丈夫、名も方連げきょうとかしなくても私は成仏する。"}], segs2
+assert "alts" not in segs2[1] and [e["text"] for e in rest] == ["香典はもらう"]
+from core import deepseek  # noqa: E402
+
+assert deepseek._row(segs2[0])["backups"] == {"MOSS（另一遍）": "大丈夫、名も方連げきょうとかしなくても私は成仏する。"}
+
 # 交给 Qwen 的提示最多 40 个词，去掉重复
 from core import pipeline  # noqa: E402
 

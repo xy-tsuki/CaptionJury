@@ -37,6 +37,7 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
 - primary：Qwen3-ASR，主要结果，字幕默认用它。
 - primary2：同一个 Qwen3-ASR 换了切分位置再听一遍，还参考了术语提示。它和 primary 是独立的两次识别，但错误倾向相近。
 - backups：其他识别模型的结果，键是模型名，可能有好几份：MiMo（中文较准；日语里的汉字常写成简体字形，按读音比较），Whisper（中日都能听，但偶尔会写出没说过的句子）。每份各算一个来源。
+  键名带“（另一遍）”的，是某个模型在切块交界处把这一段又听写了一遍，时间和 primary 对不齐，常带着前后句的一部分。只用来对照这一句里的词怎么写，不要据此把前后句的内容补进这一句，也不单独算一个来源。
 - moss：说话人分离模型顺带写出的文字。整体不如 primary，但有时能听到别的模型漏掉的轻声和重叠的话。
 同一句的几份结果来自同一段声音，可以逐词对照。
 title 是视频或音频的文件名（可能为空），常含主播名、作品名和话题；读音和 title 里的名字相近的词，按 title 的写法改，可以不标 uncertain。
@@ -329,6 +330,13 @@ def _row(s):
         if s.get(field):
             row[name] = s[field]
     backups = {models.MODELS[k]["short"]: s[k] for k in models.BACKUPS if s.get(k)}
+    for alt in s.get("alts") or []:  # 时间错位、重复了这一句的另一遍听写（sentences.absorb_repeats）
+        f = alt["field"]
+        name = "MOSS" if f == "moss" else "Qwen 复核" if f == "qwen2" else models.MODELS[f]["short"]
+        key, n = f"{name}（另一遍）", 2
+        while key in backups:
+            key, n = f"{name}（另一遍 {n}）", n + 1
+        backups[key] = alt["text"]
     if backups:
         row["backups"] = backups
     return row
@@ -380,6 +388,7 @@ def content_doubt(item, group, known=""):
     if not new:
         return None
     texts = ["".join(s.get(f) or "" for s in group) for f in TRANSCRIPTS]
+    texts += [a["text"] for s in group for a in s.get("alts") or []]
     texts = [_plain(t) for t in texts if t]
     if new in texts:
         return None

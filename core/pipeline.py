@@ -273,6 +273,9 @@ class Queue:
             terms = self._outline(cfg, job)
             self._second_pass(cfg, d, asr_lang, segs, terms)
         store.save_job(job)
+        if opt and job.get("outline") is not None:
+            # 时间和 Qwen 对不齐、重复了前后句的补插段，并进对应的句子里，校对时作为它的另一份写法
+            self.extras = sentences.absorb_repeats(job["segments"], self.extras)
         if opt:
             self._proofread(cfg, job)
         job["segments"] = sentences.place_extras(job["segments"], self.extras)

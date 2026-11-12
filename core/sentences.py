@@ -492,51 +492,88 @@ def _pick(texts):
     return texts[max(order, key=lambda f: (sum(plain[g] == plain[f] for g in order), -order.index(f)))]
 
 
-def _repeats_neighbors(texts, segs, t):
-    """几份写法都大部分出现在时间 t 前后几句的某份文字里时为 True：多半是别的模型把旁边的话又听写了一遍。"""
-    plain = lambda x: "".join(c for c in (x or "") if c not in SKIP and not c.isspace())
+def _plain(x):
+    return "".join(c for c in (x or "") if c not in SKIP and not c.isspace())
+
+
+def _matched(p, hay):
+    """p 里有多少字能在 hay 里按顺序对上。只算连着 2 个字以上的匹配：零散的单字在几百字里总能对上。"""
+    m = difflib.SequenceMatcher(None, p, hay, autojunk=False)
+    return sum(b.size for b in m.get_matching_blocks() if b.size >= 2)
+
+
+def _seg_text(s):
+    return "".join(_plain(s.get(f)) for f in ("text", "qwen") + OTHERS)
+
+
+def repeat_of(texts, segs, t):
+    """几份写法大部分都已经出现在时间 t 前后几句里时，返回其中对得最多的那句，否则 None。
+
+    这种多半是别的模型在切块交界处把旁边的话又听写了一遍，只是时间和 Qwen 对不齐（MOSS 还会把同一段听写两遍）。
+    """
     i = next((k for k, s in enumerate(segs) if s["a"] > t), len(segs))
     near = segs[max(0, i - EXTRA_NEAR):i + EXTRA_NEAR]
-    hay = "".join(plain(s.get(f)) for s in near for f in ("text", "qwen") + OTHERS)
-    if not hay:
-        return False
-    for text in texts:
-        p = plain(text)
-        if not p:
+    hay = "".join(_seg_text(s) for s in near)
+    ps = [p for p in (_plain(x) for x in texts) if p]
+    if not hay or not ps or any(_matched(p, hay) < len(p) * EXTRA_DUP for p in ps):
+        return None
+    return max(near, key=lambda s: sum(_matched(p, _seg_text(s)) for p in ps))
+
+
+def _clusters(extras):
+    """时间重叠的补插段合成一组：{"a", "b", "lang", "texts": {字段: [文字]}, "items": [原来的补插段]}。"""
+    out = []
+    for e in sorted(extras, key=lambda e: e["a"]):
+        c = out[-1] if out else None
+        if c and e["a"] < c["b"]:
+            c["b"] = max(c["b"], e["b"])
+            c["texts"].setdefault(e["field"], []).append(e["text"])
+            c["items"].append(e)
+        else:
+            out.append({"a": e["a"], "b": e["b"], "lang": e["lang"], "texts": {e["field"]: [e["text"]]}, "items": [e]})
+    return out
+
+
+def _junk(c, texts):
+    """不值得给用户看的一组：只有在这种语言上不可靠的模型（models 里的 weak）听到的，或者是 Whisper 常编的客套话。"""
+    if all(c["lang"] in models.MODELS.get(f, {}).get("weak", ()) for f in c["texts"]):
+        return True
+    return list(texts) == ["whisper"] and any(j in texts["whisper"] for j in WHISPER_JUNK)
+
+
+def absorb_repeats(segs, extras):
+    """开了 AI 校对时，在校对前调用：和前后句重复的补插段，并到对得最多的那句 Qwen 句子上，
+    记在它的 alts 里（[{"field", "text"}]），校对时作为这一句的另一份写法；返回剩下的补插段。
+    """
+    segs = sorted(segs, key=lambda s: s["a"])
+    rest = []
+    for c in _clusters(extras):
+        texts = {f: "".join(ts) for f, ts in c["texts"].items()}
+        if _junk(c, texts):
             continue
-        m = difflib.SequenceMatcher(None, p, hay, autojunk=False)
-        # 只算连着 2 个字以上的匹配：零散的单字在几百字里总能对上，算进去会把真漏掉的话也当成重复
-        if sum(b.size for b in m.get_matching_blocks() if b.size >= 2) < len(p) * EXTRA_DUP:
-            return False
-    return True
+        target = repeat_of(texts.values(), segs, c["a"])
+        if target is None:
+            rest += c["items"]
+            continue
+        for f, t in texts.items():
+            target.setdefault("alts", []).append({"field": f, "text": t})
+    return rest
 
 
 def place_extras(segs, extras):
     """把 Qwen 没识别出、其他模型听到的段落插成存疑字幕，重新编号后返回全部句子。
 
     extras 是 {"a", "b", "lang", "field", "text"}；时间重叠的合成一条，每个模型的写法放在各自的字段里。
-    这些不插：只有在这种语言上不可靠的模型（models 里的 weak，如日语的 MiMo）听到的；
-    大部分字已经在前后几句里出现过的（重复）；只有 Whisper 听到、是它常编的客套话的。
+    这些不插：只有在这种语言上不可靠的模型（models 里的 weak，如日语的 MiMo）听到的、Whisper 常编的客套话、
+    大部分字已经在前后几句里出现过的（时间错位的重复；开了 AI 校对时已经由 absorb_repeats 并进句子里）。
     """
     if not extras:
         return segs
     segs = sorted(segs, key=lambda s: s["a"])
-    clusters = []
-    for e in sorted(extras, key=lambda e: e["a"]):
-        c = clusters[-1] if clusters else None
-        if c and e["a"] < c["b"]:
-            c["b"] = max(c["b"], e["b"])
-            c["texts"].setdefault(e["field"], []).append(e["text"])
-        else:
-            clusters.append({"a": e["a"], "b": e["b"], "lang": e["lang"], "texts": {e["field"]: [e["text"]]}})
     new = []
-    for c in clusters:
-        if all(c["lang"] in models.MODELS.get(f, {}).get("weak", ()) for f in c["texts"]):
-            continue  # 只有在这种语言上不可靠的模型听到，多半是乱字
+    for c in _clusters(extras):
         texts = {f: "".join(ts) for f, ts in c["texts"].items()}
-        if list(texts) == ["whisper"] and any(j in texts["whisper"] for j in WHISPER_JUNK):
-            continue
-        if _repeats_neighbors(texts.values(), segs, c["a"]):
+        if _junk(c, texts) or repeat_of(texts.values(), segs, c["a"]) is not None:
             continue
         prev = next((s for s in reversed(segs) if s["a"] <= c["a"]), None)
         nxt = next((s for s in segs if s["a"] > c["a"]), None)
