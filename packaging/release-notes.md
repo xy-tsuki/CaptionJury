@@ -12,4 +12,4 @@ SHA-256：`{SHA256}`
 
 ## 更新内容
 
-见 [开发日志](https://github.com/xy-tsuki/tingxie/blob/main/docs/devlog.md)。
+功能介绍和使用方法见 [README](https://github.com/xy-tsuki/tingxie/blob/main/README.md)，每次的改动见 [开发日志](https://github.com/xy-tsuki/tingxie/blob/main/docs/devlog.md)。
