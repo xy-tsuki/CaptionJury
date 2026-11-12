@@ -409,7 +409,7 @@ function drawCmp() {
     <div class="tim">
       ${[['a', '入点'], ['b', '出点']].map(([k, l]) => `<div class="tim-r"><span>${l}</span><input class="field mono" data-tc="${k}" value="${hms(s[k], true)}" aria-label="${l}"><button class="btn sm" type="button" data-nudge="${k}" data-d="-0.1" aria-label="${l}提前 0.1 秒">−0.1</button><button class="btn sm" type="button" data-nudge="${k}" data-d="0.1" aria-label="${l}推后 0.1 秒">+0.1</button><button class="btn sm ghost" type="button" data-here="${k}" title="设为当前播放位置">设为播放位置</button></div>`).join('')}
     </div>
-    <div class="tim-acts"><span class="dur mono">时长 ${(s.b - s.a).toFixed(2)} 秒</span><button class="btn sm" type="button" id="playseg">${I.play}播放这一条</button><button class="btn sm ghost danger" type="button" id="del">${I.trash}删除这条</button></div>`;
+    <div class="tim-acts"><span class="dur mono">时长 ${(s.b - s.a).toFixed(2)} 秒</span><button class="btn sm" type="button" id="playseg">${I.play}播放这一条</button>${s.status === 'ask' ? '<button class="btn sm" type="button" id="ok" title="文字没问题，不用改">标为已确认</button>' : ''}<button class="btn sm ghost danger" type="button" id="del">${I.trash}删除这条</button></div>`;
   $$('[data-adopt]').forEach((b) => { b.onclick = () => setText(b.dataset.adopt); });
   $('#final').onchange = (e) => setText(e.target.value);
   const m = $('#media');
@@ -424,6 +424,7 @@ function drawCmp() {
   $$('[data-here]').forEach((b) => { b.onclick = () => setTimes(b.dataset.here, m.currentTime); });
   $('#playseg').onclick = () => { m.currentTime = s.a; S.stopAt = s.b; m.play(); };
   $('#del').onclick = deleteSeg;
+  if ($('#ok')) $('#ok').onclick = confirmSeg;
   if (!hasSpeakers()) return;
   $('#spk').onchange = async (e) => {
     await api().set_speaker(S.job.id, s.id, e.target.value);
@@ -477,8 +478,16 @@ async function deleteSeg() {
 async function setText(t) {
   const s = current();
   s.text = t;
-  await api().update_text(S.job.id, s.id, t);
-  drawList(); drawCmp(); drawWave();
+  const st = await api().update_text(S.job.id, s.id, t);
+  if (st) s.status = st;  // 存疑的条目改过以后变成已确认
+  drawFilters(); drawList(); drawCmp(); drawWave();
+}
+
+async function confirmSeg() {
+  const s = current();
+  await api().confirm_segment(S.job.id, s.id);
+  s.status = 'keep';
+  drawFilters(); drawList(); drawCmp(); drawWave();
 }
 
 function select(id, seek) {

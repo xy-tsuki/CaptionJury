@@ -172,10 +172,24 @@ class Api:
         return j
 
     def update_text(self, jid, seg_id, text):
+        """用户改了一条字幕的文字（手动填写或采用某个模型的写法）。存疑的条目改过就算用户确认过，返回新的状态。"""
         j = store.load_job(jid)
+        status = None
         for s in j["segments"]:
             if s["id"] == seg_id:
                 s["text"] = text
+                if s.get("status") == "ask":
+                    s["status"] = "keep"
+                status = s.get("status")
+        store.save_job(j)
+        return status
+
+    def confirm_segment(self, jid, seg_id):
+        """存疑的条目文字不用改，用户直接确认。"""
+        j = store.load_job(jid)
+        for s in j["segments"]:
+            if s["id"] == seg_id and s.get("status") == "ask":
+                s["status"] = "keep"
         store.save_job(j)
 
     def set_times(self, jid, seg_id, a, b):
