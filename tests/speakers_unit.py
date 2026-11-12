@@ -67,6 +67,13 @@ assert len(new) == 1 and new[0]["qwen"] == "八点见吧。" and new[0]["a"] == 
 only = sentences.apply_edit([x], "我们明天早上")
 assert only[0]["qwen"] == "" and only[0]["extra"] and only[0]["whisper"] == "我们明天早上", only
 
+# 两句重新分成三句时，其他模型的文字按位置切开，中间那句不会拿到两句的全部文字
+def seg(qw, wh, a):
+    return {"qwen": qw, "times": [(a + i * 0.2, a + i * 0.2 + 0.2) for i in range(len(qw))], "speaker": "", "a": a, "b": a + len(qw) * 0.2, "lang": "ja", "chunk": 0, "whisper": wh}
+g3 = [seg("いつもキモいとか言ってきてさだったら", "いつもキモいとか言ってきてさだったら", 0), seg("見なきゃいいじゃん別にお金払って", "見なきゃいいじゃん別にお金払って", 4)]
+new = sentences.apply_edit(g3, "いつもキモいとか言ってきてさ\nだったら見なきゃいいじゃん\n別にお金払って")
+assert [s["whisper"] for s in new] == ["いつもキモいとか言ってきてさ", "だったら見なきゃいいじゃん", "別にお金払って"], [s["whisper"] for s in new]
+
 # 整句改写（和原来的字对不上大半）时 apply_edit 不接，rough_edit 照用 AI 的文字，时间按字数均摊
 y = {"qwen": "かぐらめは聖戦装。", "times": [], "speaker": "1", "a": 12.0, "b": 13.2, "spoken_end": 13.2, "lang": "ja", "chunk": 0, "whisper": "かぐらめは生前葬"}
 x2 = dict(x, text="カグラムや正々そう", whisper="カグラムや正々そう", a=11.0, b=12.0, spoken_end=12.0)
@@ -176,4 +183,7 @@ assert [[s["qwen"] for s in g] for g in gs] == [["你好。", "走吧。"], ["�
 from core.pipeline import _echoes, _hint
 h = _hint(["零重力座椅", "问界M9", "问界M8"])
 assert _echoes("零重力座椅，问界M9，问界M8。", h) and not _echoes("这个零重力座椅真的很舒服，我们试一下吧", h) and not _echoes("嗯。", h)
+# 语气词“さ”不放在条首
+t = "つーかさ別にさ見たくないなら見なきゃ良くない？"
+assert all(t[a] != "さ" for a, _ in subtitles.split_line(t, [None] * len(t), 18))
 print("all passed")

@@ -672,7 +672,7 @@ def apply_edit(group, text):
     kept = sum(c not in SKIP for b in blocks for c in q[b.a:b.a + b.size])
     if kept / spoken < 0.5:
         return None
-    out, pos, floor = [], 0, 0
+    out, pos, floor, srcs = [], 0, 0, []
     for n, line in enumerate(lines):
         lo, hi = pos, pos + len(line)
         pos = hi
@@ -701,17 +701,20 @@ def apply_edit(group, text):
             "times": [tm for _, tm in own][lead:lead + len(qwen)], "speaker": speaker,
             **dict.fromkeys(OTHERS, ""),
         })
-        if len(group) > 1:
-            for f in OTHERS:
-                out[-1][f] = "".join(s.get(f, "") for s in group if id(s) in sources)
+        srcs.append(sources)
         alts = [x for s in group if id(s) in sources for x in s.get("alts") or []]  # “另一遍”的写法跟着原句走
         if alts:
             out[-1]["alts"] = alts
         if not out[-1]["qwen"] and all(s.get("extra") for s in group):
             out[-1]["extra"] = True  # 仍然只有其他模型听到，Qwen 一栏为空
-    if len(group) == 1:
-        for f in OTHERS:
-            if group[0].get(f):
-                for s, piece in zip(out, cut_at([tuple(s["span"]) for s in out], q, group[0][f])):
-                    s[f] = piece
+    # 其他模型的文字：整组连起来，再按新句子在 Qwen 文字里的位置切开。
+    # 不能直接把原句的整段文字给每个新句子，否则 AI 把两句重新分成三句时，中间那句会拿到两句的全部文字。
+    spans = [tuple(s["span"]) for s in out]
+    for f in OTHERS:
+        full = "".join(s.get(f, "") for s in group)
+        if not full:
+            continue
+        for s, piece, sources in zip(out, cut_at(spans, q, full), srcs):
+            # 对不上任何字时（AI 整句改写），多句合并的组退回用这句来源原句的文字
+            s[f] = piece or ("".join(x.get(f, "") for x in group if id(x) in sources) if len(group) > 1 else "")
     return out
