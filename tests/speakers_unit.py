@@ -59,6 +59,26 @@ assert all(s["alts"] == g[0]["alts"] for s in sentences.apply_edit(g, "晴空塔
 g2 = g + [{"qwen": "好", "times": [], "speaker": "2", "a": 1, "b": 2, "lang": "zh", "chunk": 0}]
 assert sentences.apply_edit(g2, "晴空塔在哪好")[0]["alts"] == g[0]["alts"]
 
+# 补插段（extra）可以和 Qwen 的句子一起改：它的字只占位，不写进 qwen；时间从补插段开始
+x = {"qwen": "", "text": "我们明天早上", "times": [], "speaker": "", "a": 10.0, "b": 11.2, "spoken_end": 11.2, "lang": "zh", "chunk": 0, "extra": True, "whisper": "我们明天早上"}
+q = {"qwen": "八点见吧。", "times": [(11.3 + i * 0.2, 11.5 + i * 0.2) for i in range(5)], "speaker": "1", "a": 11.3, "b": 12.3, "lang": "zh", "chunk": 0}
+new = sentences.apply_edit([x, q], "我们明天早上八点见吧。")
+assert len(new) == 1 and new[0]["qwen"] == "八点见吧。" and new[0]["a"] == 10.0 and new[0]["speaker"] == "1" and "extra" not in new[0], new
+only = sentences.apply_edit([x], "我们明天早上")
+assert only[0]["qwen"] == "" and only[0]["extra"] and only[0]["whisper"] == "我们明天早上", only
+
+# 没说完、不停顿接着说的半句合成一句；有句末标点、换了人、停顿长或合起来太长的不合
+def fs(text, a, b, who="1"):
+    return {"qwen": text, "text": text, "times": [(a, b)] * len(text), "a": a, "b": b, "speaker": who, "span": [0, len(text)]}
+
+
+m = sentences.merge_fragments([fs("我们明天早上", 0, 1), fs("八点见吧。", 1.1, 2)])
+assert len(m) == 1 and m[0]["qwen"] == "我们明天早上八点见吧。" and m[0]["b"] == 2 and len(m[0]["times"]) == len(m[0]["qwen"]), m
+assert len(sentences.merge_fragments([fs("好的。", 0, 1), fs("走吧。", 1.1, 2)])) == 2
+assert len(sentences.merge_fragments([fs("我们明天早上", 0, 1), fs("八点见吧。", 1.1, 2, "2")])) == 2
+assert len(sentences.merge_fragments([fs("我们明天早上", 0, 1), fs("八点见吧。", 1.5, 2)])) == 2
+assert len(sentences.merge_fragments([fs("我们明天早上一起去那个", 0, 1), fs("新开的商场里面看看有没有打折的衣服。", 1.1, 2)])) == 2
+
 # Numbers follow first appearance and skip people with no sentence left.
 segs = [{"speaker": "3"}, {"speaker": ""}, {"speaker": "1"}, {"speaker": "3"}]
 assert speakers.number(segs) == {"1": "说话人1", "2": "说话人2"} and [s["speaker"] for s in segs] == ["1", "", "2", "1"]

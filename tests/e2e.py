@@ -21,6 +21,9 @@ def fake_reply(data):
             reply = {"items": [{"ids": [g[0]["id"]], "text": g[0]["primary"] + "改", "uncertain": False, "reason": "测试修改"},
                                {"ids": [g[2]["id"], g[3]["id"]], "text": g[2]["primary"] + g[3]["primary"], "uncertain": False, "reason": ""},
                                {"ids": [9999], "text": "x", "uncertain": False, "reason": ""}]}
+            extra = next((x for x in g[5:] if x.get("only_others")), None)
+            if extra and extra is not comma:  # 只有其他模型听到的补插段：删掉一条
+                reply["items"].append({"ids": [extra["id"]], "text": "", "uncertain": False, "reason": "测试删除补插段"})
             if comma:
                 reply["items"].append({"ids": [comma["id"]], "text": comma["primary"].replace("，", "，\n", 1), "uncertain": True, "reason": "测试存疑"})
     return reply

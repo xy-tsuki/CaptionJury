@@ -39,6 +39,11 @@ PROOF_SYSTEM = """你是中日双语字幕校对。输入包含全文大纲、�
 - backups：其他识别模型的结果，键是模型名，可能有好几份：MiMo（中文较准；日语里的汉字常写成简体字形，按读音比较），Whisper（中日都能听，但偶尔会写出没说过的句子）。每份各算一个来源。
   键名带“（另一遍）”的，是某个模型在切块交界处把这一段又听写了一遍，时间和 primary 对不齐，常带着前后句的一部分。只用来对照这一句里的词怎么写，不要据此把前后句的内容补进这一句，也不单独算一个来源。
 - moss：说话人分离模型顺带写出的文字。整体不如 primary，但有时能听到别的模型漏掉的轻声和重叠的话。
+- only_others：为 true 时，primary 为空，这一句只有其他模型听到。可能是 Qwen 漏掉的话，也可能是其他模型把前后句又听了一遍、或者凭空写出的客套话。按下面处理：
+  - 是前一句或后一句的一部分（接着说下去、或和它重复）：和那一句一起列出 ids，text 写合并后的整句，重复的部分只保留一次。
+  - 是独立的一句话，至少两份结果一致或和上下文接得上：列出它，text 写校对后的文字。
+  - 是乱字、只有语气词、或只是重复了前后句：text 写空字符串，删掉。
+  - 拿不准就不要列出，原样留给用户判断。
 同一句的几份结果来自同一段声音，可以逐词对照。
 title 是视频或音频的文件名（可能为空），常含主播名、作品名和话题；读音和 title 里的名字相近的词，按 title 的写法改，可以不标 uncertain。
 全文分批校对。context_before 和 context_after 是本批前后的句子，只用来理解上下文，不要列出它们的 id，也不要改它们。
@@ -73,11 +78,14 @@ title 是视频或音频的文件名（可能为空），常含主播名、作�
 - 几份结果只差“二十年/20年”“M九/M9”这类写法时，按大纲和全文一致的写法，没有就保留 primary。
 - 数字和数量不要凭推测改；只有其他结果写的是另一个数，并且 primary 说不通时才改。
 
-断句修改范围，目标是每条字幕是一句完整的话：
-- 合并：一句话被切成相邻的几条时，把这些 id 都写进 ids，text 写合并后的整句。
+断句修改范围，目标是每条字幕是一个完整的意思单元，长短适中。识别结果是按停顿和说话人切的，常把一句话切在半中间。逐对检查相邻的两条：
+- 合并：前一条没说完（句末没有句号、问号，停在助词、连接词或半个短语上），后一条接着说下去时，把这些 id 都写进 ids，text 写合并后的整句。
+- 调整分界：相邻两条合起来超过 28 个字、但分界不在自然停顿处（例如一条只是半句的碎片，另一条很长）时，把它们一起列出，text 里用换行符 \\n 在逗号等自然停顿处重新分成两条，让两条都是完整的意思。
+- 不要留下碎片：除了“うん。”“そう。”“对。”“好的。”这类独立的应答和感叹，一条字幕不要只有三四个字的半句话。
 - 拆分：一条里有两句独立的话时，在 text 中用换行符 \\n 分开。单条不超过 28 个字，过长时在逗号等自然停顿处拆开。
-- 删除：只由“嗯”“哎”“啊”这类语气词组成的单独一条，text 写空字符串。有内容的话不能删。
+- 删除：只由“嗯”“哎”“啊”这类语气词组成的单独一条，text 写空字符串。有内容的话不能删（only_others 的句子除外，见上）。
 - 只能合并相邻的 id，不要调整先后顺序。
+- 只调整断句、没有改字时，reason 留空，text 去掉标点和换行后必须和原来的字完全一致。改了任何字，都要在 reason 写依据。
 - 句子带 speaker 时表示说话人，可以用它判断谁在回应谁。speaker 不同的句子是不同的人说的，一律不能合并，哪怕后一句是在接前一句的话。
 
 只输出 JSON，并且只列出需要修改、修正断句或存疑的句子，其余句子不要列出：
@@ -89,11 +97,19 @@ title 是视频或音频的文件名（可能为空），常含主播名、作�
 [{"id":7,"primary":"零重力座椅展开或收回时，再不只是调节。","primary2":"零重力座椅展开或收回时暂不支持调节。","moss":"零重力座椅展开或收回时暂不支持调节。"},
  {"id":8,"primary":"这个跟M九一样的","primary2":"这个跟M9是一样的","speaker":"2"},
  {"id":9,"primary":"是吧。","speaker":"2"},
- {"id":10,"primary":"今天去了浅草寺，人好多。それな、めっちゃ混んでた。","speaker":"1"}]
+ {"id":10,"primary":"今天去了浅草寺，人好多。それな、めっちゃ混んでた。","speaker":"1"},
+ {"id":11,"primary":"所以我觉得这个方案其实还不错就是","speaker":"1"},
+ {"id":12,"primary":"价格有点贵我们下次再一起讨论一下吧。","speaker":"1"},
+ {"id":13,"primary":"","only_others":true,"backups":{"Whisper":"谢谢观看"}},
+ {"id":14,"primary":"我们明天早上","speaker":"2"},
+ {"id":15,"primary":"八点在车站见面吧。","speaker":"2"}]
 输出：
 {"items":[{"ids":[7],"text":"零重力座椅展开或收回时暂不支持调节。","uncertain":false,"reason":"primary2 和 moss 一致，读音也和“再不只是”相近"},
  {"ids":[8,9],"text":"这个跟M9是一样的，是吧。","uncertain":false,"reason":"按 primary2 补上“是”；同一说话人的一句话被切开，合并"},
- {"ids":[10],"text":"今天去了浅草寺，人好多。\\nそれな、めっちゃ混んでた。","uncertain":false,"reason":""}]}"""
+ {"ids":[10],"text":"今天去了浅草寺，人好多。\\nそれな、めっちゃ混んでた。","uncertain":false,"reason":""},
+ {"ids":[11,12],"text":"所以我觉得这个方案其实还不错，就是价格有点贵。\\n我们下次再一起讨论一下吧。","uncertain":false,"reason":""},
+ {"ids":[13],"text":"","uncertain":false,"reason":"只有 Whisper 听到，和上下文接不上，像是凭空写出的客套话"},
+ {"ids":[14,15],"text":"我们明天早上八点在车站见面吧。","uncertain":false,"reason":""}]}"""
 
 
 TERMS_SYSTEM = """你帮用户为一段音视频准备语音转写用的词库。
@@ -336,6 +352,8 @@ _KEEP = re.compile(r"[\W_]+")
 
 def _row(s):
     row = {"id": s["id"], "lang": s["lang"], "primary": s["qwen"]}
+    if s.get("extra"):  # Qwen 没听到、只有其他模型听到的补插段
+        row["only_others"] = True
     for field, name in SOURCES + (("speaker", "speaker"),):
         if s.get(field):
             row[name] = s[field]
@@ -384,9 +402,19 @@ def structure_error(item, own, taken):
         return f"ids {ids} 和别的条目重复"
     if len({own[i].get("speaker") for i in ids} - {"", None}) > 1:
         return f"ids {ids} 属于不同说话人，不能合并"
-    if not str(item.get("text", "")).strip() and not all(sentences.is_filler(own[i]["qwen"]) or len(_plain(own[i]["qwen"])) <= 2 for i in ids):
+    if not str(item.get("text", "")).strip() and not all(own[i].get("extra") or sentences.is_filler(own[i]["qwen"]) or len(_plain(own[i]["qwen"])) <= 2 for i in ids):
         return f"ids {ids} 有实际内容，不能删除"
     return None
+
+
+def silent_change(item, group):
+    """reason 留空（表示只调整断句）却改了字时返回原因，否则 None。标点、空格和换行不算。"""
+    if str(item.get("reason") or "").strip() or not str(item.get("text", "")).strip():
+        return None
+    before = _plain("".join(s["qwen"] or s.get("text", "") for s in group))
+    if _plain(item["text"]) == before:
+        return None
+    return "reason 为空表示只调整断句，但 text 改了字。只调整断句时字要和原来完全一致；改了字要在 reason 写依据"
 
 
 def content_doubt(item, group, known=""):
@@ -425,6 +453,9 @@ def _proof_batch(chat, base, segments, a, b):
             if not isinstance(item, dict):
                 continue
             why = structure_error(item, own, taken)
+            silent = None if why else silent_change(item, [own[int(i)] for i in item["ids"]])
+            if silent and attempt < chat.attempts - 1:  # 还能重做：带上原因让 AI 改；最后一次就照用，但标成存疑
+                why = silent
             if why:
                 bad.append((item, why))
                 continue
@@ -432,6 +463,8 @@ def _proof_batch(chat, base, segments, a, b):
             item["ids"] = ids
             taken.update(ids)
             doubt = content_doubt(item, [own[i] for i in ids], base.get("title", "") + "".join(base.get("glossary") or []))
+            if silent:
+                doubt = "；".join(x for x in ("校验：说是只调整断句，但改了字，请对照各模型的结果确认", doubt) if x)
             if doubt:
                 item["uncertain"] = True
                 item["reason"] = "；".join(x for x in (str(item.get("reason") or "").strip(), doubt) if x)

@@ -10,6 +10,7 @@ PAUSE_BREAK = 1.2  # a comma followed by a pause this long ends a sentence
 GLUE_GAP = 1.0  # an unfinished clause joins the next one across a gap up to this long
 SHORT = 3  # spoken characters; a fragment this short joins a neighbour that follows closely
 SHORT_GAP = 0.35
+FRAGMENT_GAP = 0.3  # 前一句没有句末标点、停顿不到这么久就接着说的，算同一句
 SAME_TURN_GAP = 0.6  # a sentence nobody could be matched to joins a neighbour this close
 MIN_DURATION = 0.8
 TAIL = 0.15  # keeps the subtitle up briefly after the last character
@@ -319,7 +320,28 @@ def build(stream, lang):
             "speaker": _main_speaker(who[a:b]) if has_who else "",
         })
     _fill_speakers(segs)
-    return finalize(segs)
+    return finalize(merge_fragments(segs))
+
+
+def merge_fragments(segs):
+    """前一句没有句末标点、同一个人几乎不停顿就接着说下去的，合成一句（合起来不超过 MAX_CHARS 个字）。
+
+    这类切口多半来自说话人编号短暂跳动，并不是真的换了一句；不开 AI 校对时也能少掉一批半句话的碎片。
+    """
+    out = []
+    for s in segs:
+        p = out[-1] if out else None
+        last = p["qwen"].rstrip(CLOSERS)[-1:] if p else ""
+        if (p and last and last not in ENDS and p["speaker"] == s["speaker"] and s["a"] - p["b"] < FRAGMENT_GAP
+                and len(p["qwen"]) + len(s["qwen"]) <= MAX_CHARS):
+            p["times"] = (p["times"] + [None] * len(p["qwen"]))[:len(p["qwen"])] + s["times"]
+            p["qwen"] += s["qwen"]
+            p["text"] = p["qwen"]
+            p["b"] = s["b"]
+            p["span"] = [0, len(p["qwen"])]
+            continue
+        out.append(s)
+    return out
 
 
 GROUP_SPAN = 30.0  # seconds of neighbouring sentences the backup model hears at once
@@ -583,7 +605,7 @@ def place_extras(segs, extras):
             continue
         new.append({
             "id": 0, "a": a, "b": b, "spoken_end": max(a, b - TAIL), "lang": c["lang"], "qwen": "", "text": _pick(texts),
-            "status": "ask", "why": EXTRA_WHY, "chunk": 0, "span": [0, 0], "times": [], "speaker": "",
+            "status": "ask", "why": EXTRA_WHY, "chunk": 0, "span": [0, 0], "times": [], "speaker": "", "extra": True,
             **dict.fromkeys(OTHERS, ""), **texts,
         })
     return finalize(sorted(segs + new, key=lambda s: s["a"]))
@@ -600,9 +622,19 @@ def apply_edit(group, text):
 
     Returns the new sentences, or None when the edit lost too much of the speech to be trusted.
     """
-    q = "".join(s["qwen"] for s in group)
-    times = [t for s in group for t in (s["times"] + [None] * len(s["qwen"]))[:len(s["qwen"])]]
-    owner = [s for s in group for _ in s["qwen"]]
+    # 补插段（extra）没有 Qwen 文字，用它的默认写法占位，时间按字数均摊；这些字不写进新句子的 qwen 字段
+    base = [(s, s["qwen"] or (s["text"] if s.get("extra") else "")) for s in group]
+    q = "".join(t for _, t in base)
+    times = []
+    for s, t in base:
+        if s["qwen"]:
+            times += (s["times"] + [None] * len(t))[:len(t)]
+        else:
+            end = s.get("spoken_end", s["b"])
+            step = (end - s["a"]) / max(1, len(t))
+            times += [(s["a"] + i * step, s["a"] + (i + 1) * step) for i in range(len(t))]
+    real = [bool(s["qwen"]) for s, t in base for _ in t]
+    owner = [s for s, t in base for _ in t]
     lines = [x.strip() for x in text.split("\n") if x.strip()]
     joined = "".join(lines)
     blocks = [b for b in difflib.SequenceMatcher(None, q, joined, autojunk=False).get_matching_blocks() if b.size]
@@ -629,7 +661,7 @@ def apply_edit(group, text):
         speaker = next((s["speaker"] for s in group if s.get("speaker")), "")
         a, b = (known[0][0], known[-1][1]) if known else (first["a"], first["b"])
         out.append({
-            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": q[q0:q1].strip(),
+            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": "".join(c for c, r in zip(q[q0:q1], real[q0:q1]) if r).strip(),
             "text": line, "status": "raw", "why": "", "chunk": first["chunk"], "span": [q0, q1], "times": [], "speaker": speaker,
             **dict.fromkeys(OTHERS, ""),
         })
@@ -639,6 +671,8 @@ def apply_edit(group, text):
         alts = [x for s in group if id(s) in sources for x in s.get("alts") or []]  # “另一遍”的写法跟着原句走
         if alts:
             out[-1]["alts"] = alts
+        if not out[-1]["qwen"] and all(s.get("extra") for s in group):
+            out[-1]["extra"] = True  # 仍然只有其他模型听到，Qwen 一栏为空
     if len(group) == 1:
         for f in OTHERS:
             if group[0].get(f):

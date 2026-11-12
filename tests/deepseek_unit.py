@@ -61,7 +61,7 @@ def fake_ask(system, payload, history=()):
     calls.append((payload, list(history)))
     if not history:
         reply = {"items": [{"ids": [7], "text": "零重力座椅打开以后你就可以完全躺平休息了。", "uncertain": False, "reason": "通顺"},
-                           {"ids": [8, 9], "text": "这个跟M9是一样的，是吧。", "uncertain": False, "reason": ""},
+                           {"ids": [8, 9], "text": "这个跟M9是一样的，是吧。", "uncertain": False, "reason": "按 primary2 补上“是”"},
                            {"ids": [99], "text": "x"}]}
     else:
         reply = {"items": [{"ids": [10], "text": "好。", "uncertain": False, "reason": ""}]}
@@ -161,4 +161,31 @@ class TermsChat(FakeChat):
 
 
 assert deepseek.make_terms(TermsChat(), {"topic": "x"}) == ["神楽めあ", "香典"]
+# 只调整断句（reason 为空）时不能改字：先打回重做，最后一次还这样就照用但标成存疑
+g2 = [seg(1, "我们明天早上"), seg(2, "八点在车站见面吧。")]
+assert deepseek.silent_change({"ids": [1, 2], "text": "我们明天早上，\n八点在车站见面吧。", "reason": ""}, g2) is None
+assert deepseek.silent_change({"ids": [1, 2], "text": "我们明天早上九点在车站见面吧。", "reason": ""}, g2)
+assert deepseek.silent_change({"ids": [1, 2], "text": "我们明天早上九点在车站见面吧。", "reason": "Whisper 是九点"}, g2) is None
+
+
+class SilentChat:
+    batch, attempts = deepseek.BATCH, 2
+
+    def ask(self, system, payload, history=()):
+        calls.append(list(history))
+        reply = {"items": [{"ids": [1, 2], "text": "我们明天早上九点在车站见面吧。", "uncertain": False, "reason": ""}]}
+        return reply, json.dumps(reply, ensure_ascii=False)
+
+
+calls.clear()
+items, dropped = deepseek._proof_batch(SilentChat(), {"outline": "", "glossary": []}, g2, 0, 2)
+assert len(calls) == 2 and "只调整断句" in calls[1][0][1], calls
+assert items[0]["uncertain"] and "只调整断句" in items[0]["reason"] and dropped == 0
+
+# 补插段（只有其他模型听到）：交给 AI 时标出来，可以删掉
+x = seg(3, "", extra=True, whisper="谢谢观看")
+assert deepseek._row(x)["only_others"] is True and deepseek._row(x)["primary"] == ""
+assert deepseek.structure_error({"ids": [3], "text": ""}, {3: x}, set()) is None
+assert deepseek.structure_error({"ids": [1], "text": ""}, {1: g2[0]}, set())
+assert "only_others" in deepseek.PROOF_SYSTEM and "调整分界" in deepseek.PROOF_SYSTEM
 print("all passed")

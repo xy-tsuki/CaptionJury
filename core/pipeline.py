@@ -223,7 +223,7 @@ class Queue:
             keys.append("qwen2")
             keys.append("deepseek")
         self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
-        self.extras = []  # Qwen 没识别出、其他模型听到的段落，校对完插成存疑字幕
+        self.extras = []  # Qwen 没识别出、其他模型听到的段落；开了 AI 校对时校对前插进去交给 AI，否则最后插成存疑字幕
         for lane in self.state["current"]["lanes"]:
             lane["name"] = NAMES[lane["key"]]
 
@@ -276,6 +276,9 @@ class Queue:
         if opt and job.get("outline") is not None:
             # 时间和 Qwen 对不齐、重复了前后句的补插段，并进对应的句子里，校对时作为它的另一份写法
             self.extras = sentences.absorb_repeats(job["segments"], self.extras)
+            # 剩下的补插段在校对前插进去，由 AI 决定并进前后句、保留还是删掉
+            job["segments"] = sentences.place_extras(job["segments"], self.extras)
+            self.extras = []
         if opt:
             self._proofread(cfg, job)
         job["segments"] = sentences.place_extras(job["segments"], self.extras)
@@ -482,7 +485,7 @@ class Queue:
         """Returns the sentences that replace group, keeping the originals if the edit cannot be trusted."""
         text = str(item.get("text", "")).strip()
         if not text:
-            if all(sentences.is_filler(s["qwen"]) or len(_norm(s["qwen"])) <= 2 for s in group):
+            if all(s.get("extra") or sentences.is_filler(s["qwen"]) or len(_norm(s["qwen"])) <= 2 for s in group):
                 return []
             new = None
         else:
@@ -495,7 +498,10 @@ class Queue:
         for s in new:
             agree = sentences.backups_agree(s)
             s["why"] = deepseek.readable(item.get("reason", "") or "")
-            if item.get("uncertain"):
+            if s.get("extra"):  # 还是只有其他模型听到的，交给用户确认
+                s["status"] = "ask"
+                s["why"] = s["why"] or sentences.EXTRA_WHY
+            elif item.get("uncertain"):
                 s["status"] = "ask"
             elif _norm(s["text"]) != _norm(s["qwen"]):
                 s["status"] = "fix"
@@ -623,7 +629,7 @@ class Queue:
     def _proofread(self, cfg, job):
         if job.get("outline") is None:
             return
-        segs = [s for s in job["segments"] if s["qwen"]]
+        segs = [s for s in job["segments"] if s["qwen"] or s.get("extra")]
         t = self.tracker
         name = deepseek.label(cfg)
         cur = self.state["current"]
@@ -666,9 +672,10 @@ class Queue:
                 ids, item = edits[s["id"]]
                 final += self._apply_edit([by_id[i] for i in ids], item)
             elif s["id"] not in covered:
-                agree = sentences.backups_agree(s)
-                s["status"] = "ok" if agree else "keep"
-                s["why"] = "" if agree else "几份结果不同，AI 保留了 Qwen 的写法。"
+                if not s.get("extra"):  # AI 没动的补插段保持存疑
+                    agree = sentences.backups_agree(s)
+                    s["status"] = "ok" if agree else "keep"
+                    s["why"] = "" if agree else "几份结果不同，AI 保留了 Qwen 的写法。"
                 final.append(s)
         job["segments"] = sentences.finalize(final)
         if ignored + dropped:
