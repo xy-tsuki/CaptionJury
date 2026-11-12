@@ -17,7 +17,8 @@ PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
 SLICES_DONE = re.compile(r"\((\d+)/\d+ slices\)")
 OUT_TIME = re.compile(r"out_time_(?:us|ms)=(\d+)")
 LOAD_SHARE = 8  # part of a model's bar reserved for loading it
-ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu")
+# 各模型在日志里说明用上了显卡的写法；Whisper 写的是 "using CUDA0 backend"
+ON_GPU = re.compile(r"preferred GPU backend|backend=(CUDA|Vulkan)|on gpu|using (CUDA|Vulkan)\d* backend")
 NAMES = {
     "extract": "提取音频", "vad": "语音检测", "qwen": "Qwen3-ASR", "qwen2": "Qwen3-ASR 复核", "mimo": "MiMo-V2.5-ASR",
     "parakeet": "parakeet-ctc-1.1b-ja", "whisper": "Whisper large-v3", "deepseek": "DeepSeek 校对", "moss": "MOSS 说话人",
