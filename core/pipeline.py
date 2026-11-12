@@ -99,7 +99,7 @@ class Queue:
         return now - self.paused_for - ((now - self.paused_at) if self.paused_at else 0)
 
     # ---------- control ----------
-    def start(self, files, lang, opt, formats, diarize=False):
+    def start(self, files, lang, opt, formats, diarize=False, compare=False):
         if self.state["running"]:
             raise RuntimeError("已有任务正在运行")
         self.cancel = False
@@ -109,7 +109,7 @@ class Queue:
             "running": True, "error": None, "finished": None, "current": None,
             "queue": [Path(f).name for f in files], "index": 0, "total": len(files), "done": [], "queue_pct": 0,
         }
-        self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize), daemon=True)
+        self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize, compare), daemon=True)
         self.thread.start()
 
     def set_paused(self, paused):
@@ -138,7 +138,7 @@ class Queue:
             raise Cancelled()
 
     # ---------- queue ----------
-    def _run(self, files, lang, opt, formats, diarize):
+    def _run(self, files, lang, opt, formats, diarize, compare):
         ticker = threading.Thread(target=self._ticker, daemon=True)
         ticker.start()
         try:
@@ -146,7 +146,7 @@ class Queue:
             self.durations = [_duration(cfg, f) or 1.0 for f in files]
             for i, f in enumerate(files):
                 self.state["index"] = i
-                job = self._one(f, lang, opt, formats, self.durations[i], diarize)
+                job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare)
                 self.state["done"].append(job["id"])
             self.state["queue_pct"] = 100
             self.state["finished"] = self.state["done"][-1] if self.state["done"] else None
@@ -169,23 +169,25 @@ class Queue:
             time.sleep(0.25)
 
     # ---------- one file ----------
-    def _one(self, source, lang, opt, formats, duration, diarize):
+    def _one(self, source, lang, opt, formats, duration, diarize, compare=False):
         cfg = store.load_config()
         jid, d = store.new_job_dir()
         src = Path(source)
         job = {
             "id": jid, "source": str(src), "name": src.name, "created": time.time(),
-            "lang": lang, "opt": opt, "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
+            "lang": lang, "opt": opt, "compare": compare, "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": True,
         }
-        self.state["current"] = {"name": src.name, "lang": lang, "opt": opt, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
+        self.state["current"] = {"name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]
         # Which backup models hear which language's sentences, as the user picked them.
         serves = {}
         for seg_lang in [x for x in ("zh", "ja") if lang in (x, "mix")]:
             for name in models.backups_for(cfg, seg_lang):
                 serves.setdefault(name, []).append(seg_lang)
-        if opt:  # 顺序：备用模型 → DeepSeek 大纲 → Qwen 复核（带大纲里的术语）→ DeepSeek 校对
+        # 顺序：备用模型（多模型对照）→ DeepSeek 大纲 → Qwen 复核（带大纲里的术语）→ DeepSeek 校对（AI 精度优化）
+        if compare:
             keys += [name for name in models.BACKUPS if name in serves]
+        if opt:
             keys.append("qwen2")
             keys.append("deepseek")
         self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
@@ -217,7 +219,7 @@ class Queue:
             self._attach_moss(slices, turns[0], segs)
         store.save_job(job)
 
-        if opt:
+        if compare:
             # 每个备用模型按整句分组，只听用户为它勾选的语言的句子
             plans = {}
             for name, langs in serves.items():
@@ -234,6 +236,7 @@ class Queue:
                     found = sentences.attach_backup(g, "".join(s["qwen"] for s in g), res.get(i, "").strip(), langs, name)
                     self._keep_extras(segs, found, name)
             store.save_job(job)
+        if opt:
             # 大纲参考全部备用结果，找出的专有名词作为提示交给 Qwen 复核
             terms = self._outline(cfg, job)
             self._second_pass(cfg, d, asr_lang, segs, terms)

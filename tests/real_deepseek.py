@@ -24,7 +24,7 @@ if cfg["deepseek_model"] not in models:
 for path, out in zip(sys.argv[1::2], sys.argv[2::2]):
     q = pipeline.Queue()
     t0 = time.time()
-    q.start([path], "zh", True, ["SRT"], bool(os.environ.get("DIARIZE")))
+    q.start([path], "zh", True, ["SRT"], bool(os.environ.get("DIARIZE")), True)
     marks = {}
     while q.state["running"]:
         for lane in (q.state["current"] or {}).get("lanes", []):

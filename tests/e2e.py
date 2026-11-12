@@ -34,7 +34,7 @@ store.set_key("sk-test-value")
 assert store.get_key() == "sk-test-value" and b"sk-test" not in store.KEYFILE.read_bytes()
 
 path, lang, opt = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
-q = pipeline.Queue(); t0 = time.time(); q.start(path.split("|"), lang, opt, ["SRT", "ASS", "VTT", "TXT"], bool(os.environ.get("DIARIZE")))
+q = pipeline.Queue(); t0 = time.time(); q.start(path.split("|"), lang, opt, ["SRT", "ASS", "VTT", "TXT"], bool(os.environ.get("DIARIZE")), os.environ.get("COMPARE", "1" if opt else "") == "1")
 last = None
 while q.state["running"]:
     c = q.state["current"]

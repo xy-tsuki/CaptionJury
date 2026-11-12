@@ -30,6 +30,7 @@ DEFAULTS = {
     "glossary": "",
     "lang": "mix",
     "opt": True,
+    "compare": True,
     "diarize": False,
     "formats": ["SRT", "ASS"],
     "speed": {},

@@ -111,14 +111,14 @@ class Api:
         return out
 
     # ---------- queue ----------
-    def start(self, paths, lang, opt, formats, diarize=False):
+    def start(self, paths, lang, opt, formats, diarize=False, compare=False):
         if opt and not store.has_key():
-            return {"error": "精度优化需要 DeepSeek，请先在设置里保存密钥"}
+            return {"error": "AI 精度优化需要 DeepSeek，请先在设置里保存密钥"}
         if diarize and not Path(store.load_config()["moss_model"]).exists():
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
-        store.save_config({"lang": lang, "opt": opt, "formats": formats, "diarize": diarize})
+        store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize})
         try:
-            self._queue.start(paths, lang, opt, formats, diarize)
+            self._queue.start(paths, lang, opt, formats, diarize, compare)
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
