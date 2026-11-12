@@ -40,6 +40,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - 语法检查：`PY -m compileall -q app.py core tests`
 - 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`、`PY tests/align_unit.py`
 - 字错率：`PY tests/cer.py 参考稿_VID_1001.txt 结果.srt [job.json ...] [-v]`
+- 按读音的字错率（写法不同、读音相同不算错，日语内容用这个）：`PY tests/cer_kana.py 参考稿.txt 结果.srt job.json [-- 参考稿2.txt 结果2 ...] [-v]`，多段时给出加权合计。需要另装 `pykakasi`（不进 requirements.txt）。宣传和比较用的精度数字以它为准。
 - 需要本机模型的检查（不进 CI）：
   - `PY tests/e2e.py 音频 zh 1`：真模型加本地假校对接口跑完整流程（`AGENT=1` 改走复制给 Agent，脚本自己粘贴假回复，`DIARIZE=1` 开启说话人区分，`BACKUPS='{"zh": ["mimo", "whisper"]}'` 指定备用模型）；
   - 这些脚本用临时数据目录，通过 `tests/local_models.py` 沿用本机设置里的模型路径；
