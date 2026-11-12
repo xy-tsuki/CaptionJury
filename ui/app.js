@@ -3,10 +3,27 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const view = $('#view');
-const X = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"></path></svg>';
 
-const S = { cfg: null, files: [], lang: 'mix', opt: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, seenFinished: null };
+/* 图标：16 格、1.4 线宽，颜色跟随文字 */
+const svg = (d, cls = '') => `<svg viewBox="0 0 16 16" class="${cls}" aria-hidden="true">${d}</svg>`;
+const I = {
+  x: svg('<path d="M4 4l8 8M12 4l-8 8"/>'),
+  up: svg('<path d="M8 11V2.5M4.5 6L8 2.5 11.5 6M2.5 10.5v3h11v-3"/>', 'ic'),
+  prev: svg('<path d="M12 3.5L6 8l6 4.5zM4 3.5v9"/>'),
+  next: svg('<path d="M4 3.5L10 8l-6 4.5zM12 3.5v9"/>'),
+  play: svg('<path d="M4.5 2.8L13 8l-8.5 5.2z"/>', 'fill'),
+  pause: svg('<path d="M4.5 3h2.5v10H4.5zM9 3h2.5v10H9z"/>', 'fill'),
+  folder: svg('<path d="M1.8 3.5h4.4l1.4 1.6h6.6v7.4H1.8z"/>'),
+  trash: svg('<path d="M2.5 4.5h11M6 4.5V2.8h4v1.7M4 4.5l.7 8.7h6.6l.7-8.7"/>'),
+  find: svg('<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L14 14"/>'),
+  down: svg('<path d="M8 2.5V11M4.5 7.5L8 11l3.5-3.5M2.5 13.5h11"/>'),
+  lock: svg('<rect x="3" y="7" width="10" height="6.5"/><path d="M5.2 7V5a2.8 2.8 0 015.6 0v2"/>'),
+};
+
+const S = { cfg: null, files: [], lang: 'mix', opt: true, compare: true, dia: false, formats: ['SRT', 'ASS'], status: null, job: null, sel: 1, flt: 'all', pollT: null, hq: '' };
 const api = () => window.pywebview.api;
+const FORMATS = ['SRT', 'ASS', 'VTT', 'TXT'];
+const LANGS = { zh: '中文', ja: '日语', mix: '中文 + 日语' };
 
 function hms(t, ms) {
   // 先换成整数毫秒再拆，避免 5.09 这种浮点数显示成 5,089
@@ -16,8 +33,10 @@ function hms(t, ms) {
   const base = `${p(s / 3600)}:${p((s / 60) % 60)}:${p(s % 60)}`;
   return ms ? `${base},${p(n % 1000, 3)}` : base;
 }
-const bytes = (n) => (n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.round(n / 1e6) + ' MB');
+const bytes = (n) => (n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB');
 const langAttr = (l) => (l === 'ja' ? 'ja' : 'zh-CN');
+const when = (t) => { const d = new Date(t * 1000); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fileName = (p) => String(p).split(/[\\/]/).pop();
 
 let toastT;
 /* action 可选：{ label, fn }，在提示里放一个按钮（比如撤销） */
@@ -32,6 +51,8 @@ function toast(msg, action) {
     b.onclick = () => { t.hidden = true; action.fn(); };
     t.append(b);
   }
+  t.hidden = true;
+  void t.offsetWidth;  // 重新触发出现动画
   t.hidden = false;
   clearTimeout(toastT);
   toastT = setTimeout(() => { t.hidden = true; }, action ? 8000 : 4200);
@@ -45,76 +66,118 @@ function parseTc(v) {
   return n.some((x) => !Number.isFinite(x) || x < 0) ? null : n.reduce((acc, x) => acc * 60 + x, 0);
 }
 
-/* ---------- new job ---------- */
+/* 导出菜单：选格式，写到源文件旁边。校对页和历史页共用 */
+function exportMenu(jid, small = true) {
+  const f = S.expFormats || S.formats;
+  return `<details class="menu" data-exp="${jid}">
+    <summary class="btn ${small ? 'sm' : ''} solid">${I.down}导出字幕</summary>
+    <div class="menu-pop">
+      <div class="fmts">${FORMATS.map((x) => `<button type="button" class="fmt mono${f.includes(x) ? ' on' : ''}" data-xf="${x}" aria-pressed="${f.includes(x)}">${x}</button>`).join('')}</div>
+      <p>写在源文件所在的文件夹，再次导出会覆盖上次导出的文件。</p>
+      <button class="btn sm solid" type="button" data-xgo>导出</button>
+    </div>
+  </details>`;
+}
+
+function bindExport(root = document) {
+  $$('[data-exp]', root).forEach((m) => {
+    m.ontoggle = () => { if (m.open) $$('[data-exp]').forEach((o) => { if (o !== m) o.open = false; }); };
+    $$('[data-xf]', m).forEach((b) => {
+      b.onclick = () => {
+        const f = S.expFormats || [...S.formats];
+        S.expFormats = f.includes(b.dataset.xf) ? f.filter((x) => x !== b.dataset.xf) : [...f, b.dataset.xf];
+        $$('[data-xf]').forEach((o) => { const on = S.expFormats.includes(o.dataset.xf); o.classList.toggle('on', on); o.setAttribute('aria-pressed', on); });
+      };
+    });
+    $('[data-xgo]', m).onclick = async (e) => {
+      const f = FORMATS.filter((x) => (S.expFormats || S.formats).includes(x));
+      if (!f.length) return toast('请至少选一种格式');
+      e.target.classList.add('busy');
+      const out = await api().export(m.dataset.exp, f);
+      e.target.classList.remove('busy');
+      if (out.error) return toast(out.error);
+      m.open = false;
+      toast('已导出：' + out.map(fileName).join('、'));
+    };
+  });
+}
+document.addEventListener('click', (e) => {  // 点菜单外面就收起
+  $$('details.menu[open]').forEach((m) => { if (!m.contains(e.target)) m.open = false; });
+});
+
+/* ---------- 新建 ---------- */
 /* 这次会跑的备用模型：[[语言名, [模型名...]], ...]，按设置里的勾选和已安装的模型 */
 function activeBackups() {
   const on = (S.cfg && S.cfg.backups_active) || {};
   return [['zh', '中文'], ['ja', '日语']].filter(([k]) => S.lang === k || S.lang === 'mix').map(([k, l]) => [l, on[k] || []]);
 }
 
-function help() {
-  if (!S.opt) return '只运行 Qwen3-ASR，不做 DeepSeek 校对。';
-  const b = activeBackups().map(([l, ms]) => (ms.length ? `${l}句加跑 ${ms.join('、')}` : `${l}没有可用的备用模型（可在设置里勾选）`)).join('，');
-  return `${b}；之后 DeepSeek 写大纲，Qwen 带着大纲里的术语再听一遍，最后 DeepSeek 对照各份结果逐句校对。`;
-}
-
 function renderNew() {
-  const model = (name, role, on) => `<div class="md ${on ? 'on' : 'off'}"><span class="led"></span><span>${name}</span><span class="r">${on ? role : '不运行'}</span></div>`;
-  // 备用模型一行一个，标明用于哪种语言；没开精度优化时显示"不运行"
-  const backupRows = () => {
-    const uses = {};
-    for (const [l, ms] of activeBackups()) for (const m of ms) (uses[m] = uses[m] || []).push(l);
-    const names = Object.keys(uses);
-    if (!names.length) return model('备用模型', '', false);
-    return names.map((m) => model(m, uses[m].length > 1 ? '中日备用' : `${uses[m][0]}备用`, S.opt)).join('');
-  };
-  const seg = [['zh', '中文'], ['ja', '日语'], ['mix', '中文 + 日语']].map(([id, l]) => `<button type="button" class="${S.lang === id ? 'on' : ''}" aria-pressed="${S.lang === id}" data-lang="${id}">${l}</button>`).join('');
-  const fmts = ['SRT', 'ASS', 'VTT', 'TXT'].map((f) => `<label class="check mono" style="font-size:13px"><input type="checkbox" data-fmt="${f}" ${S.formats.includes(f) ? 'checked' : ''}><span>${f}</span></label>`).join('');
-  const queue = S.files.map((f, i) => `<div class="q-row"><span class="mono cap ix">${String(i + 1).padStart(2, '0')}</span><span class="q-name">${esc(f.name)}</span><span class="mono dim sz" style="font-size:12px;text-align:right">${hms(f.duration)}</span><span class="mono faint" style="font-size:12px;text-align:right">${bytes(f.size)}</span><button class="x" type="button" aria-label="从队列移除" data-rm="${i}">${X}</button></div>`).join('');
+  const backups = activeBackups();
+  const anyBackup = backups.some(([, ms]) => ms.length);
+  const compareText = backups.map(([l, ms]) => (ms.length ? `${l}句加跑 ${ms.join('、')}` : `${l}没有可用的备用模型`)).join('，');
+  const running = S.status && S.status.running;
+  const total = S.files.reduce((a, f) => a + (f.duration || 0), 0);
+  const seg = Object.entries(LANGS).map(([id, l]) => `<button type="button" class="${S.lang === id ? 'on' : ''}" aria-pressed="${S.lang === id}" data-lang="${id}">${l}</button>`).join('');
+  const fmts = FORMATS.map((f) => `<button type="button" class="fmt mono${S.formats.includes(f) ? ' on' : ''}" aria-pressed="${S.formats.includes(f)}" data-fmt="${f}">${f}</button>`).join('');
+  const queue = S.files.map((f, i) => `<div class="q-row"><span class="q-name" title="${esc(f.path)}">${esc(f.name)}</span><span class="q-meta mono">${hms(f.duration)}</span><span class="q-meta mono faint">${bytes(f.size)}</span><button class="x" type="button" aria-label="从队列移除 ${esc(f.name)}" data-rm="${i}">${I.x}</button></div>`).join('');
+  // 处理流程：亮的是这次会跑的步骤
+  const md = (name, on) => `<span class="md${on ? '' : ' off'}"><i></i>${esc(name)}</span>`;
+  const uses = {};
+  for (const [l, ms] of backups) for (const m of ms) (uses[m] = uses[m] || []).push(l);
   view.innerHTML = `
   <main class="m-grid">
     <section class="m-left" aria-label="文件">
-      <div class="drop" id="drop">
-        <h1>拖入视频或音频</h1>
-        <div class="ln"><span class="mono cap">MP4 MKV MOV WEBM / WAV MP3 FLAC M4A</span><button class="btn" type="button" id="pick">选择文件</button></div>
+      <div class="drop${S.files.length ? ' has' : ''}" id="drop">
+        ${I.up}
+        <div><h1>${S.files.length ? '继续添加文件' : '拖入视频或音频'}</h1><p class="hint mono">MP4 MKV MOV WEBM · WAV MP3 FLAC M4A</p></div>
+        <button class="btn" type="button" id="pick">选择文件</button>
       </div>
-      <div class="queue"><div class="cap" style="padding-bottom:10px">队列</div>${queue || '<p class="faint" style="font-size:13px">还没有文件</p>'}</div>
+      ${S.files.length ? `<div class="queue">${queue}</div><div class="q-sum"><span>${S.files.length} 个文件，按顺序转写</span><span class="mono">共 ${hms(total)}</span></div>` : ''}
     </section>
     <section class="m-right" aria-label="转写设置">
-      <div class="m-sec">
-        <span class="cap">识别语言</span>
-        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-          <div class="seg" role="group" aria-label="识别语言">${seg}</div>
-          <label class="check"><input type="checkbox" id="opt" ${S.opt ? 'checked' : ''}><span>精度优化</span></label>
-          <label class="check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><span>区分说话人</span></label>
+      <div class="m-form">
+        <div class="m-sec"><span class="lbl">识别语言</span><div class="seg" role="group" aria-label="识别语言">${seg}</div></div>
+        <div class="m-sec"><span class="lbl">处理</span>
+          <div>
+            <label class="opt check"><input type="checkbox" id="compare" ${S.compare ? 'checked' : ''}><b>多模型对照</b>
+              <p>${compareText}。校对页逐句列出各模型的写法，可以一键采用。</p>
+              ${S.compare && !anyBackup ? '<span class="warn">没有可用的备用模型，到设置里下载并勾选。</span>' : ''}</label>
+            <label class="opt check"><input type="checkbox" id="opt" ${S.opt ? 'checked' : ''}><b>AI 精度优化</b>
+              <p>DeepSeek 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后 DeepSeek 对照各份结果逐句校对。只发送文字。</p>
+              ${S.opt && S.cfg && !S.cfg.has_key ? '<span class="warn">还没有保存 DeepSeek 密钥，到设置里填写。</span>' : ''}</label>
+            <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
+              <p>先用 MOSS 分出说话人，再标到每条字幕上。</p></label>
+          </div>
         </div>
-        <p class="m-help">${help()}${S.dia ? ' 先用 MOSS 分出说话人，再标到字幕上。' : ''}</p>
+        <div class="m-sec"><span class="lbl">字幕格式</span><div class="fmts" role="group" aria-label="字幕格式">${fmts}</div><span class="faint small">保存在源文件所在的文件夹。</span></div>
       </div>
-      <div class="m-sec"><span class="cap">字幕格式</span><div style="display:flex;gap:24px;flex-wrap:wrap">${fmts}</div></div>
-      <div class="m-sec"><span class="cap">保存位置</span><span>与源文件同目录</span></div>
-      <button class="btn solid" type="button" id="go" style="margin-top:auto;height:56px;font-size:15px">开始转写</button>
+      <div class="m-go">
+        ${running
+    ? '<a class="btn solid" href="#progress">有任务正在转写，查看进度</a><span class="faint">当前任务结束后才能开始新的转写。</span>'
+    : `<button class="btn solid" type="button" id="go" ${S.files.length && S.formats.length ? '' : 'disabled'}>开始转写</button><span class="faint">${!S.files.length ? '先添加要转写的文件。' : !S.formats.length ? '至少选一种字幕格式。' : `${S.files.length} 个文件，共 ${hms(total)}。`}</span>`}
+      </div>
     </section>
   </main>
-  <section class="chain" aria-label="处理链路">
-    <div class="st"><span class="n mono">01</span><span class="t">提取音频</span><span class="dim" style="font-size:13px">FFmpeg</span></div>
-    <div class="st"><span class="n mono">02</span><span class="t">断句对时</span><span class="dim" style="font-size:13px">${'按句子切分，逐字对时'}</span></div>
-    <div class="st"><span class="n mono">03</span><span class="t">识别</span>
-      ${model('Qwen3-ASR 1.7B', '主识别', true)}${backupRows()}${model('MOSS', '说话人', S.dia)}
-    </div>
-    <div class="st ${S.opt ? '' : 'off'}"><span class="n mono">04</span><span class="t">校对</span><span class="dim" style="font-size:13px">DeepSeek</span><span class="faint" style="font-size:13px">${S.opt ? '大纲 → Qwen 复核 → 逐句校对' : '不运行'}</span></div>
-    <div class="st"><span class="n mono">05</span><span class="t">生成字幕</span><span class="dim mono" style="font-size:13px">${S.formats.join(' ') || '未选择格式'}</span></div>
+  <section class="flow" aria-label="处理流程">
+    <div class="fs"><span class="t">提取音频</span><span class="d">FFmpeg 转成 16 kHz 单声道</span></div>
+    <div class="fs wide"><span class="t">识别</span>${md('Qwen3-ASR 主识别，逐字对时、断句', true)}${md('MOSS 区分说话人', S.dia)}</div>
+    <div class="fs${S.compare ? '' : ' off'}"><span class="t">多模型对照</span>${Object.keys(uses).length ? Object.entries(uses).map(([m, ls]) => md(`${m}（${ls.join('、')}）`, S.compare)).join('') : '<span class="d">没有可用的备用模型</span>'}</div>
+    <div class="fs wide${S.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${S.opt ? '大纲 → Qwen 复核 → DeepSeek 逐句校对' : '不运行'}</span></div>
+    <div class="fs"><span class="t">生成字幕</span><span class="d mono">${S.formats.join(' ') || '未选择格式'}</span></div>
   </section>`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
   $('#opt').onchange = (e) => { S.opt = e.target.checked; renderNew(); };
+  $('#compare').onchange = (e) => { S.compare = e.target.checked; renderNew(); };
   $('#dia').onchange = (e) => { S.dia = e.target.checked; renderNew(); };
-  $$('[data-fmt]').forEach((c) => { c.onchange = () => { const f = c.dataset.fmt; S.formats = c.checked ? [...S.formats, f] : S.formats.filter((x) => x !== f); renderNew(); }; });
+  $$('[data-fmt]').forEach((b) => { b.onclick = () => { const f = b.dataset.fmt; S.formats = S.formats.includes(f) ? S.formats.filter((x) => x !== f) : FORMATS.filter((x) => x === f || S.formats.includes(x)); renderNew(); }; });
   $$('[data-rm]').forEach((b) => { b.onclick = () => { S.files.splice(+b.dataset.rm, 1); renderNew(); }; });
   $('#pick').onclick = async () => { addFiles(await api().pick_files()); };
-  $('#go').onclick = start;
+  if ($('#go')) $('#go').onclick = start;
   const drop = $('#drop');
   drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); };
+  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); };  // 文件路径由 Python 那边收到后推给 poll
 }
 
 function addFiles(list) {
@@ -126,63 +189,64 @@ function addFiles(list) {
 async function start() {
   if (!S.files.length) return toast('请先添加文件');
   if (!S.formats.length) return toast('请至少选择一种字幕格式');
-  const r = await api().start(S.files.map((f) => f.path), S.lang, S.opt, S.formats, S.dia);
+  const r = await api().start(S.files.map((f) => f.path), S.lang, S.opt, S.formats, S.dia, S.compare);
   if (r.error) return toast(r.error);
   S.files = [];
   location.hash = '#progress';
 }
 
-/* ---------- progress ---------- */
+/* ---------- 进度 ---------- */
 function renderProgress() {
   const s = S.status || {};
   const c = s.current;
   if (!c) {
-    // 刚做完一个任务时，给一个去校对的入口
     const done = !s.error && s.finished;
-    view.innerHTML = `<div class="empty"><p>${s.error ? esc(s.error) : done ? '转写完成' : '当前没有任务'}</p><div style="display:flex;gap:12px">${done ? '<a class="btn solid" href="#review">去校对</a>' : ''}<a class="btn" href="#new">新建转写</a></div></div>`;
+    view.innerHTML = `<div class="empty">
+      <h2>${s.error ? '转写出错' : done ? '转写完成' : '现在没有在跑的任务'}</h2>
+      <p>${s.error ? esc(s.error) : done ? '字幕已经写到源文件旁边。可以去校对页逐句检查，以后也能在历史里找到它。' : '在新建页添加文件并开始转写，这里会显示每个模型的进度和预计剩余时间。'}</p>
+      <div class="acts">${done ? '<a class="btn solid" href="#review">去校对</a>' : ''}<a class="btn" href="#new">新建转写</a><a class="btn ghost" href="#history">查看历史</a></div>
+    </div>`;
     return;
   }
   const elapsed = c.elapsed || 0;
   const remain = c.remaining ?? null;
-  const langName = { zh: '中文', ja: '日语', mix: '中文 + 日语' }[c.lang];
   const N = 64;
   const lanes = c.lanes.map((l) => {
     const done = Math.floor(l.pct / 100 * N);
     let cells = '';
     for (let i = 0; i < N; i++) cells += `<span class="cell${i < done ? ' done' : (i === done && l.pct > 0 && l.pct < 100 && !s.paused ? ' now' : '')}"></span>`;
-    return `<div class="lane${l.pct === 0 ? ' wait' : ''}"><span>${l.name}</span><div class="cells" aria-hidden="true">${cells}</div><span class="s">${esc(l.state)}</span></div>`;
+    return `<div class="lane${l.pct === 0 ? ' wait' : l.pct >= 100 ? ' fin' : ''}"><span>${esc(l.name)}</span><div class="cells" aria-hidden="true">${cells}</div><span class="s">${esc(l.state)}</span></div>`;
   }).join('');
   const stream = (c.stream || []).map((r) => `<div class="ln2"><span class="tc mono">${hms(r.t, true)}</span><span>${esc(r.text)}</span></div>`).join('');
   const finished = !s.running;
+  const on = (x) => (x ? '开启' : '关闭');
   view.innerHTML = `
   <main class="p-grid">
     <section class="p-left" aria-label="总进度">
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <span class="cap">${finished ? '已结束' : `正在处理 ${(s.index || 0) + 1} / ${s.total || 1}`}</span>
-        <h1 style="font-size:17px;font-weight:500;word-break:break-all">${esc(c.name)}</h1>
-      </div>
-      <div class="big">${Math.floor(c.pct)}<small>%</small></div>
-      <dl class="kv" style="margin:0">
-        <dt>语言</dt><dd>${langName}</dd>
-        <dt>精度优化</dt><dd>${c.opt ? '开启' : '关闭'}</dd>
-        <dt>区分说话人</dt><dd>${c.diarize ? '开启' : '关闭'}</dd>
+      <div><p class="where">${finished ? '已结束' : s.paused ? '已暂停' : `正在转写第 ${(s.index || 0) + 1} 个，共 ${s.total || 1} 个`}</p><h1>${esc(c.name)}</h1></div>
+      <div><div class="big">${Math.floor(c.pct)}<small>%</small></div></div>
+      <div class="bar" aria-hidden="true"><i style="width:${Math.min(100, c.pct)}%"></i></div>
+      <dl class="kv">
+        ${finished ? '' : `<dt>已用时</dt><dd class="mono">${hms(elapsed)}</dd><dt>预计剩余</dt><dd class="mono">${remain === null ? '估算中' : hms(remain)}</dd>${s.total > 1 ? `<dt>整个队列</dt><dd class="mono">${Math.floor(s.queue_pct || 0)}%</dd>` : ''}`}
         <dt>时长</dt><dd class="mono">${c.duration ? hms(c.duration) : '-'}</dd>
-        ${finished ? '' : `${s.total > 1 ? `<dt>整个队列</dt><dd class="mono">${Math.floor(s.queue_pct || 0)}%</dd>` : ''}<dt>已用时</dt><dd class="mono">${hms(elapsed)}</dd><dt>预计剩余</dt><dd class="mono">${remain === null ? '估算中' : hms(remain)}</dd>`}
+        <dt>语言</dt><dd>${LANGS[c.lang] || '-'}</dd>
+        <dt>多模型对照</dt><dd>${on(c.compare)}</dd>
+        <dt>AI 精度优化</dt><dd>${on(c.opt)}</dd>
+        <dt>区分说话人</dt><dd>${on(c.diarize)}</dd>
         ${s.vram ? `<dt>显存</dt><dd class="mono">${s.vram}</dd>` : ''}
       </dl>
       ${s.error ? `<p class="err">${esc(s.error)}</p>` : ''}
-      ${(c.warnings || []).map((w) => `<p class="err">${esc(w)}</p>`).join('')}
-      <div style="margin-top:auto;display:flex;gap:8px">
+      ${(c.warnings || []).map((w) => `<p class="warn">${esc(w)}</p>`).join('')}
+      <div class="p-acts">
         ${finished
-    ? (s.finished ? `<a class="btn solid" style="flex:1" href="#review">进入校对</a>` : `<a class="btn" style="flex:1" href="#new">返回新建</a>`)
-    : `<button class="btn" type="button" style="flex:1" id="pause">${s.paused ? '继续' : '暂停'}</button><button class="btn ghost" type="button" id="cancel">取消</button>`}
+    ? (s.finished ? '<a class="btn solid" href="#review">进入校对</a>' : '<a class="btn" href="#new">返回新建</a>')
+    : `<button class="btn" type="button" id="pause">${s.paused ? '继续' : '暂停'}</button><button class="btn ghost" type="button" id="cancel">取消</button>`}
       </div>
     </section>
     <section class="p-right" aria-label="各模型进度">
-      <div class="ruler"><span class="cap">本地模型依次加载</span><div class="tk mono"></div><span></span></div>
-      ${lanes}
-      <div class="stream" aria-label="已完成的识别结果">
-        ${stream ? `<div class="cap" style="padding-bottom:8px">${esc(c.stream_name)} 最后几条结果</div>${stream}` : ''}
+      <div class="lanes">${lanes}</div>
+      <div class="stream" aria-label="最新识别结果">
+        ${stream ? `<h3>${esc(c.stream_name)} 最新几条</h3>${stream}` : '<p class="faint small">识别出的文字会在这里滚动显示。</p>'}
       </div>
     </section>
   </main>`;
@@ -192,8 +256,9 @@ function renderProgress() {
   if (x) x.onclick = async () => { await api().cancel(); };
 }
 
-/* ---------- review ---------- */
+/* ---------- 校对 ---------- */
 const TAGS = { ok: '一致', keep: '已确认', fix: '已修正', ask: '存疑', raw: '初稿' };
+const stc = (st) => 'st-' + (TAGS[st] ? st : 'raw');
 
 function markDiff(a, b) {
   let i = 0;
@@ -208,7 +273,7 @@ async function renderReview() {
   const jobs = await api().jobs();
   if (!S.job && jobs.length) await openJob((S.status && S.status.finished) || jobs[0].id);
   if (!S.job) {
-    view.innerHTML = '<div class="empty"><p>还没有转写结果</p><a class="btn" href="#new">新建转写</a></div>';
+    view.innerHTML = `<div class="empty"><h2>还没有转写结果</h2><p>转写完成后，这里左边是预览和各模型写法的对照，右边是字幕列表。改完可以直接导出。</p><div class="acts"><a class="btn solid" href="#new">新建转写</a></div></div>`;
     return;
   }
   const j = S.job;
@@ -219,22 +284,22 @@ async function renderReview() {
   <main class="e-grid">
     <section class="e-left${isVideo ? '' : ' audio'}" aria-label="预览与对照">
       <div class="video">
-        ${isVideo ? `<video id="media" src="${base}/source" preload="metadata"></video>` : `<audio id="media" src="${base}/audio" preload="metadata"></audio><span class="ph mono">音频预览</span>`}
+        ${isVideo ? `<video id="media" src="${base}/source" preload="metadata"></video>` : `<audio id="media" src="${base}/audio" preload="metadata"></audio>`}
         <p class="sub" id="sub"></p>
       </div>
       <div class="trans">
-        <button class="ico" type="button" aria-label="上一条" id="prev"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M12 3L6 8l6 5zM4 3v10"></path></svg></button>
-        <button class="ico" type="button" aria-label="播放" id="play"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5l9 5.5-9 5.5z"></path></svg></button>
-        <button class="ico" type="button" aria-label="下一条" id="next"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M4 3l6 5-6 5zM12 3v10"></path></svg></button>
-        <span class="tc mono" id="clock">00:00:00,000</span>
+        <button class="ico" type="button" aria-label="上一条" title="上一条" id="prev">${I.prev}</button>
+        <button class="ico play" type="button" aria-label="播放" id="play">${I.play}</button>
+        <button class="ico" type="button" aria-label="下一条" title="下一条" id="next">${I.next}</button>
+        <span class="tc mono" id="clock">00:00:00,000</span><span class="of mono">/ ${hms(j.duration)}</span>
       </div>
       <div class="cmp" id="cmp"></div>
     </section>
     <section class="e-right" aria-label="字幕列表">
       <div class="e-bar">
-        <select class="pick" id="jobsel" aria-label="选择转写结果">${options}</select>
+        <select class="pick" id="jobsel" aria-label="切换转写结果">${options}</select>
         <div class="seg small" role="group" aria-label="筛选" id="flt"></div>
-        <div class="sp">${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags === false ? '' : 'checked'}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr">查找替换</button><button class="btn sm solid" type="button" id="exp">导出字幕</button></div>
+        <div class="sp">${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags === false ? '' : 'checked'}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
       </div>
       <div class="frbar" id="frbar" hidden>
         <input class="field" id="f1" placeholder="查找" aria-label="查找"><input class="field" id="f2" placeholder="替换为" aria-label="替换为"><button class="btn sm" type="button" id="frgo">全部替换</button>
@@ -242,15 +307,18 @@ async function renderReview() {
       <div class="list" id="list"></div>
     </section>
   </main>
-  <section class="wave" aria-label="波形时间轴">
+  <section class="wave" aria-label="时间轴">
+    <div class="ov" id="ov" title="整段录音：彩色是已修正和存疑的位置，点击跳过去"></div>
     <div class="w-t mono" id="wt"></div>
-    <canvas id="wc" height="60" aria-hidden="true"></canvas>
+    <canvas id="wc" height="52" aria-hidden="true"></canvas>
     <div class="w-s" id="ws"></div>
   </section>`;
   const m = $('#media');
   $('#prev').onclick = () => step(-1);
   $('#next').onclick = () => step(1);
   $('#play').onclick = () => { S.stopAt = null; m.paused ? m.play() : m.pause(); };
+  const icon = () => { const b = $('#play'); b.innerHTML = m.paused ? I.play : I.pause; b.setAttribute('aria-label', m.paused ? '播放' : '暂停'); };
+  m.onplay = icon; m.onpause = icon;
   m.ontimeupdate = () => {
     $('#clock').textContent = hms(m.currentTime, true);
     moveHead();
@@ -260,19 +328,22 @@ async function renderReview() {
   };
   $('#jobsel').onchange = async (e) => { await openJob(e.target.value); renderReview(); };
   if ($('#tags')) $('#tags').onchange = async (e) => { j.speaker_tags = e.target.checked; await api().set_speaker_tags(j.id, e.target.checked); };
-  $('#fr').onclick = () => { const b = $('#frbar'); b.hidden = !b.hidden; };
+  $('#fr').onclick = () => { const b = $('#frbar'); b.hidden = !b.hidden; $('#fr').setAttribute('aria-expanded', !b.hidden); if (!b.hidden) $('#f1').focus(); };
   $('#frgo').onclick = async () => {
     const f = $('#f1').value;
     if (!f) return;
     const n = await api().replace_all(j.id, f, $('#f2').value);
     await openJob(j.id);
-    drawList(); drawCmp();
-    toast(`替换了 ${n} 处`);
+    drawList(); drawCmp(); drawWave();
+    toast(n ? `替换了 ${n} 处` : '没有找到');
   };
-  $('#exp').onclick = async () => {
-    const out = await api().export(j.id, S.formats.length ? S.formats : ['SRT']);
-    toast('已导出：' + out.map((p) => p.split('\\').pop()).join('、'));
+  $('#ov').onclick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const t = (e.clientX - r.left) / r.width * total();
+    const near = j.segments.reduce((a, s) => (Math.abs((s.a + s.b) / 2 - t) < Math.abs((a.a + a.b) / 2 - t) ? s : a), j.segments[0]);
+    if (near) select(near.id, true);
   };
+  bindExport($('.e-bar'));
   drawFilters(); drawList(); drawCmp(); drawWave();
 }
 
@@ -283,26 +354,27 @@ async function openJob(id) {
 
 const hasSpeakers = () => Object.keys(S.job.speakers || {}).length > 0 || S.job.segments.some((s) => s.speaker);
 const speakerName = (s) => (S.job.speakers || {})[s.speaker] || '';
+const total = () => S.job.duration || (S.job.segments.length ? S.job.segments[S.job.segments.length - 1].b : 1);
 
 function drawFilters() {
   const segs = S.job.segments;
   const n = (st) => segs.filter((s) => s.status === st).length;
-  const items = [['all', `全部 ${segs.length}`]];
-  if (S.job.opt) items.push(['fix', `已修正 ${n('fix')}`], ['ask', `存疑 ${n('ask')}`]);
-  $('#flt').innerHTML = items.map(([id, l]) => `<button type="button" class="${S.flt === id ? 'on' : ''}" data-f="${id}">${l}</button>`).join('');
+  const items = [['all', '全部', segs.length]];
+  if (n('ask')) items.push(['ask', '存疑', n('ask')]);
+  if (n('fix')) items.push(['fix', '已修正', n('fix')]);
+  if (!items.some(([id]) => id === S.flt)) S.flt = 'all';
+  $('#flt').innerHTML = items.map(([id, l, c]) => `<button type="button" class="${S.flt === id ? 'on' : ''}" aria-pressed="${S.flt === id}" data-f="${id}">${l}<span class="n mono">${c}</span></button>`).join('');
   $$('[data-f]').forEach((b) => { b.onclick = () => { S.flt = b.dataset.f; drawFilters(); drawList(); }; });
 }
 
 function drawList() {
   const rows = S.job.segments.filter((s) => S.flt === 'all' || s.status === S.flt);
-  $('#list').innerHTML = rows.map((s) => {
-    const cls = { fix: ' fix', ask: ' ask' }[s.status] || '';
-    return `<button type="button" class="row${cls}${s.id === S.sel ? ' sel' : ''}" data-id="${s.id}">
-      <span class="ix mono">${String(s.id).padStart(3, '0')}</span>
+  $('#list').innerHTML = rows.map((s) => `<button type="button" class="row ${stc(s.status)}${s.id === S.sel ? ' sel' : ''}" data-id="${s.id}">
+      <span class="ix mono">${s.id}</span>
       <span class="tc mono">${hms(s.a, true)}<br>${hms(s.b, true)}</span>
-      <span lang="${langAttr(s.lang)}">${hasSpeakers() ? `<small class="spk">${esc(speakerName(s) || '未标注')}</small>` : ''}${esc(s.text)}</span>
-      <span class="stt"><span class="sq"></span>${TAGS[s.status]}</span></button>`;
-  }).join('');
+      <span class="tx" lang="${langAttr(s.lang)}">${hasSpeakers() ? `<small class="spk">${esc(speakerName(s) || '未标注')}</small>` : ''}${esc(s.text)}</span>
+      <span class="stt"><i class="dot"></i>${TAGS[s.status] || '初稿'}</span></button>`).join('')
+    || '<p class="none-hit">这一类已经清空了。</p>';
   $$('.row').forEach((r) => { r.onclick = () => select(+r.dataset.id, true); });
 }
 
@@ -310,34 +382,34 @@ function current() { return S.job.segments.find((s) => s.id === S.sel) || S.job.
 
 function drawCmp() {
   const s = current();
-  if (!s) return;
+  if (!s) { $('#cmp').innerHTML = '<p class="faint small">这份结果没有字幕条目。</p>'; return; }
   $('#sub').textContent = s.text;
   $('#sub').lang = langAttr(s.lang);
   const cands = [];
   const missed = !s.qwen;  // Qwen 没识别出、由其他模型补上的一条
-  if (S.job.opt || missed) {
-    const backups = [['mimo', 'MiMo'], ['whisper', 'Whisper'], ['parakeet', 'Parakeet']].filter(([k]) => s[k]);
-    if (s.alt) backups.push(['alt', s.alt_name]);  // 支持多个备用模型之前的旧任务
+  const backups = [['mimo', 'MiMo'], ['whisper', 'Whisper'], ['parakeet', 'Parakeet']].filter(([k]) => s[k]);
+  if (s.alt) backups.push(['alt', s.alt_name]);  // 支持多个备用模型之前的旧任务
+  if (backups.length || s.qwen2 || s.moss || missed) {
     const base = missed ? s.text : s.qwen;  // 和 Qwen 比；Qwen 没有结果时和默认采用的写法比
-    cands.push(['Qwen3-ASR', s.qwen, backups.length ? s[backups[0][0]] : s.qwen2]);
+    cands.push(['Qwen3-ASR', s.qwen, backups.length ? s[backups[0][0]] : s.qwen2 || s.moss || '']);
     if (s.qwen2) cands.push(['Qwen 复核', s.qwen2, base]);
     for (const [k, name] of backups) cands.push([name, s[k], base]);
     if (s.moss) cands.push(['MOSS', s.moss, base]);
   }
   const rows = cands.map(([who, t, other]) => {
-    if (!t) return `<div class="cd"><span class="who mono">${esc(who)}</span><span class="txt dim">没有结果</span></div>`;
+    if (!t) return `<div class="cd"><span class="who">${esc(who)}</span><span class="txt faint">没有结果</span></div>`;
     const ad = t === s.text;
-    return `<div class="cd${ad ? ' ad' : ''}"><span class="who mono">${esc(who)}</span><span class="txt" lang="${langAttr(s.lang)}">${markDiff(t, other)}</span><button class="btn sm" type="button" data-adopt="${esc(t)}">${ad ? '已采用' : '采用'}</button></div>`;
+    return `<div class="cd${ad ? ' ad' : ''}"><span class="who">${esc(who)}</span><span class="txt" lang="${langAttr(s.lang)}">${markDiff(t, other)}</span><button class="btn sm${ad ? ' ghost' : ''}" type="button" data-adopt="${esc(t)}" ${ad ? 'disabled' : ''}>${ad ? '已采用' : '采用'}</button></div>`;
   }).join('');
   $('#cmp').innerHTML = `
-    <div class="cmp-h"><span class="cap">第 ${s.id} 条${S.job.opt ? ' · 候选对照' : ''}</span>${hasSpeakers() ? speakerBar(s) : ''}</div>
-    ${rows}
-    <label class="final"><span class="cap">最终字幕</span><textarea class="field" id="final" rows="2" lang="${langAttr(s.lang)}">${esc(s.text)}</textarea></label>
+    <div class="cmp-h"><h2>第 ${s.id} 条<span class="stt ${stc(s.status)}"><i class="dot"></i>${TAGS[s.status] || '初稿'}</span></h2>${hasSpeakers() ? speakerBar(s) : ''}</div>
+    ${s.why ? `<p class="why${s.status === 'fix' ? ' fix' : ''}">${esc(s.why)}</p>` : ''}
+    ${rows ? `<div class="cands">${rows}</div>` : ''}
+    <label class="final"><span>最终字幕</span><textarea class="field" id="final" rows="2" lang="${langAttr(s.lang)}">${esc(s.text)}</textarea></label>
     <div class="tim">
-      ${[['a', '入点'], ['b', '出点']].map(([k, l]) => `<div class="tim-r"><span class="cap">${l}</span><input class="field mono" data-tc="${k}" value="${hms(s[k], true)}" aria-label="${l}"><button class="btn sm" type="button" data-nudge="${k}" data-d="-0.1" aria-label="${l}提前 0.1 秒">−0.1</button><button class="btn sm" type="button" data-nudge="${k}" data-d="0.1" aria-label="${l}推后 0.1 秒">+0.1</button><button class="btn sm" type="button" data-here="${k}">设为播放位置</button></div>`).join('')}
-      <div class="tim-r"><span class="cap">时长</span><span class="mono dim">${(s.b - s.a).toFixed(2)} 秒</span><button class="btn sm" type="button" id="playseg">播放这一条</button><button class="btn sm ghost" type="button" id="del">删除这条</button></div>
+      ${[['a', '入点'], ['b', '出点']].map(([k, l]) => `<div class="tim-r"><span>${l}</span><input class="field mono" data-tc="${k}" value="${hms(s[k], true)}" aria-label="${l}"><button class="btn sm" type="button" data-nudge="${k}" data-d="-0.1" aria-label="${l}提前 0.1 秒">−0.1</button><button class="btn sm" type="button" data-nudge="${k}" data-d="0.1" aria-label="${l}推后 0.1 秒">+0.1</button><button class="btn sm ghost" type="button" data-here="${k}" title="设为当前播放位置">设为播放位置</button></div>`).join('')}
     </div>
-    ${s.why ? `<p class="why">${esc(s.why)}</p>` : ''}`;
+    <div class="tim-acts"><span class="dur mono">时长 ${(s.b - s.a).toFixed(2)} 秒</span><button class="btn sm" type="button" id="playseg">${I.play}播放这一条</button><button class="btn sm ghost danger" type="button" id="del">${I.trash}删除这条</button></div>`;
   $$('[data-adopt]').forEach((b) => { b.onclick = () => setText(b.dataset.adopt); });
   $('#final').onchange = (e) => setText(e.target.value);
   const m = $('#media');
@@ -438,23 +510,27 @@ function drawWave() {
   const w = c.clientWidth || 1000;
   c.width = w;
   const g = c.getContext('2d');
-  const cs = getComputedStyle(c);
+  const cs = getComputedStyle(document.documentElement);
   const t0 = windowStart();
   const s = current();
-  const peaks = S.job.peaks;
-  g.clearRect(0, 0, w, 60);
+  const peaks = S.job.peaks || [];
+  const H = 52;
+  g.clearRect(0, 0, w, H);
   for (let x = 0; x < w; x += 3) {
     const t = t0 + x / w * SPAN;
     const p = peaks[Math.floor(t * 20)] || 0;
-    const h = Math.max(1, p / 100 * 54);
-    g.fillStyle = s && t >= s.a && t <= s.b ? cs.getPropertyValue('--accline') : cs.getPropertyValue('--line2');
-    g.fillRect(x, 30 - h / 2, 2, h);
+    const h = Math.max(1, p / 100 * (H - 4));
+    g.fillStyle = s && t >= s.a && t <= s.b ? cs.getPropertyValue('--fg') : cs.getPropertyValue('--line2');
+    g.fillRect(x, H / 2 - h / 2, 2, h);
   }
-  const ticks = [0, 8, 16, 24, 32].map((d) => `<span>${hms(t0 + d)}</span>`).join('');
-  $('#wt').innerHTML = ticks;
+  $('#wt').innerHTML = [0, 8, 16, 24, 32].map((d) => `<span>${hms(t0 + d)}</span>`).join('');
   const vis = S.job.segments.filter((x) => x.b > t0 && x.a < t0 + SPAN);
-  $('#ws').innerHTML = vis.map((x) => `<button type="button" class="blk${x.id === S.sel ? ' sel' : ''}" style="left:${(x.a - t0) / SPAN * 100}%;width:${(x.b - x.a) / SPAN * 100}%" data-b="${x.id}" aria-label="跳到第 ${x.id} 条">${x.id}</button>`).join('') + '<span class="head" id="head"></span>';
+  $('#ws').innerHTML = vis.map((x) => `<button type="button" class="blk ${stc(x.status)}${x.id === S.sel ? ' sel' : ''}" style="left:${(x.a - t0) / SPAN * 100}%;width:${(x.b - x.a) / SPAN * 100}%" data-b="${x.id}" aria-label="跳到第 ${x.id} 条" title="${esc(x.text)}">${x.id}</button>`).join('') + '<span class="head" id="head"></span>';
   $$('[data-b]').forEach((b) => { b.onclick = () => select(+b.dataset.b, true); });
+  // 总览：整段录音里已修正和存疑的位置，加一个框标出下面波形显示的范围
+  const T = total();
+  $('#ov').innerHTML = S.job.segments.filter((x) => x.status === 'ask' || x.status === 'fix').map((x) => `<i class="${stc(x.status)}" style="left:${x.a / T * 100}%;width:${(x.b - x.a) / T * 100}%"></i>`).join('')
+    + `<span class="vw" style="left:${t0 / T * 100}%;width:${Math.min(100, SPAN / T * 100)}%"></span>`;
   moveHead();
 }
 
@@ -466,34 +542,97 @@ function moveHead() {
   h.style.display = p < 0 || p > 100 ? 'none' : '';
 }
 
-/* ---------- settings ---------- */
+/* ---------- 历史 ---------- */
+async function renderHistory() {
+  const jobs = S.history = await api().jobs();
+  if (!jobs.length) {
+    view.innerHTML = `<div class="empty"><h2>还没有识别记录</h2><p>每次转写的结果都会留在这里，可以随时重新打开校对，或者换一种格式再导出。</p><div class="acts"><a class="btn solid" href="#new">新建转写</a></div></div>`;
+    return;
+  }
+  view.innerHTML = `
+  <header class="pagehead"><h1>历史记录</h1><span class="faint small" id="hn"></span></header>
+  <div class="h-tools">
+    <input class="field" id="hq" type="search" placeholder="按文件名查找" aria-label="按文件名查找" value="${esc(S.hq)}">
+    <span class="faint small">删除记录只删程序里保存的识别结果，不动源文件和已经导出的字幕。</span>
+  </div>
+  <div class="h-list" id="hlist"></div>`;
+  $('#hq').oninput = (e) => { S.hq = e.target.value; drawHistory(); };
+  drawHistory();
+}
+
+function drawHistory() {
+  const q = S.hq.trim().toLowerCase();
+  const rows = S.history.filter((j) => !q || j.name.toLowerCase().includes(q));
+  $('#hn').textContent = q ? `${rows.length} / ${S.history.length} 个` : `${S.history.length} 个`;
+  const live = S.status && S.status.running && S.status.current ? S.status.current.id : null;
+  const chips = (j) => [LANGS[j.lang], j.compare && '对照', j.opt && 'AI 优化', j.speakers && '说话人'].filter(Boolean).map((t) => `<span class="chip">${t}</span>`).join('');
+  const acts = (j) => {
+    if (j.id === live) return '<span class="undone">正在转写</span>';
+    const usable = j.count > 0;
+    return `${usable ? `<button class="btn sm" type="button" data-open="${j.id}">打开校对</button>${exportMenu(j.id)}` : ''}
+      <button class="btn sm ghost" type="button" data-reveal="${esc(j.source)}" title="在资源管理器里显示源文件" aria-label="打开源文件所在文件夹">${I.folder}</button>
+      <button class="btn sm ghost danger" type="button" data-del="${j.id}" title="删除这条记录" aria-label="删除这条记录">${I.trash}</button>`;
+  };
+  $('#hlist').innerHTML = `<div class="h-row h-head"><span>文件</span><span>识别时间</span><span>时长</span><span>处理</span><span>条目</span><span></span></div>`
+    + rows.map((j) => `<div class="h-row${S.job && S.job.id === j.id ? ' cur' : ''}">
+      <div class="h-name"><b title="${esc(j.name)}">${esc(j.name)}</b><span title="${esc(j.source)}">${esc(j.source)}</span></div>
+      <span class="h-when mono small dim">${when(j.created)}</span>
+      <span class="h-dur mono small dim">${hms(j.duration)}</span>
+      <div class="h-chips">${chips(j)}</div>
+      <div class="h-count">${j.done || j.id === live ? `<span>${j.count} 条</span>` : '<span class="undone">没有做完</span>'}${j.ask ? `<span class="a st-ask"><i class="dot"></i>存疑 ${j.ask}</span>` : ''}${j.fix ? `<span class="f st-fix"><i class="dot"></i>已修正 ${j.fix}</span>` : ''}</div>
+      <div class="h-acts">${acts(j)}</div>
+    </div>`).join('')
+    + (rows.length ? '' : '<p class="none-hit" style="padding:28px 32px">没有文件名包含这个词的记录。</p>');
+  $$('[data-open]').forEach((b) => { b.onclick = async () => { await openJob(b.dataset.open); S.flt = 'all'; location.hash = '#review'; }; });
+  $$('[data-reveal]').forEach((b) => { b.onclick = async () => { const r = await api().reveal(b.dataset.reveal); if (r && r.error) toast(r.error); }; });
+  // 删除要点两次：第一次按钮变红提示，4 秒内再点才删
+  $$('[data-del]').forEach((b) => {
+    b.onclick = async () => {
+      if (!b.classList.contains('armed')) {
+        b.classList.add('armed');
+        b.innerHTML = '确认删除';
+        setTimeout(() => { if (b.isConnected) { b.classList.remove('armed'); b.innerHTML = I.trash; } }, 4000);
+        return;
+      }
+      const id = b.dataset.del;
+      const r = await api().delete_job(id);
+      if (r.error) return toast(r.error);
+      if (S.job && S.job.id === id) S.job = null;
+      S.history = S.history.filter((j) => j.id !== id);
+      toast('已删除这条记录');
+      S.history.length ? drawHistory() : renderHistory();
+    };
+  });
+  bindExport($('#hlist'));
+}
+
+/* ---------- 设置 ---------- */
 async function renderSettings() {
   const c = S.cfg = await api().config();
   const ok = await api().check_models();
   const ms = await api().models();
   const srcs = await api().sources();
-  const gb = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
-  const fetchRow = (m) => m.installed ? '' : `<div class="mget" data-get="${m.name}"><select class="field" data-src="${m.name}" aria-label="${esc(m.label)} 下载来源">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select><button class="btn" type="button" data-dl="${m.name}" data-label="下载（${gb(m.size)}）">下载（${gb(m.size)}）</button><span class="dlst" data-dlst="${m.name}"></span></div>`;
+  const fetchRow = (m) => m.installed ? '' : `<div class="mget" data-get="${m.name}"><select class="field" data-src="${m.name}" aria-label="${esc(m.label)} 下载来源">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select><button class="btn" type="button" data-dl="${m.name}" data-label="下载（${bytes(m.size)}）">下载（${bytes(m.size)}）</button><span class="dlst" data-dlst="${m.name}"></span></div>`;
   const LANG = { zh: '中文', ja: '日语' };
-  const files = (m) => m.files.map((f) => `<div class="mrow"><span>${m.files.length > 1 ? esc(f.key.replace(/^\w+_/, '')) : '文件'}</span><input class="field mono p" data-cfg="${f.key}" value="${esc(f.path)}" aria-label="${esc(m.label)} 路径"><span class="ok">${f.ok ? '就绪' : '找不到文件'}</span></div>`).join('');
-  const card = (m) => `<div class="mcard"><div class="mhead"><b>${esc(m.label)}</b><span class="ok">${m.installed ? '已安装' : '未安装'}</span></div><p class="desc">${esc(m.desc)}</p>${fetchRow(m)}${m.role === 'backup' ? `<div class="muse">${m.langs.map((l) => `<label class="check"><input type="checkbox" data-bk="${m.name}" data-lang="${l}" ${m.use.includes(l) ? 'checked' : ''}><span>用于${LANG[l]}</span></label>`).join('')}${m.installed ? '' : '<span class="faint">未安装时不会使用</span>'}</div>` : ''}${files(m)}</div>`;
+  const files = (m) => m.files.map((f) => `<div class="mrow"><span>${m.files.length > 1 ? esc(f.key.replace(/^\w+_/, '')) : '文件'}</span><input class="field mono" data-cfg="${f.key}" value="${esc(f.path)}" aria-label="${esc(m.label)} 路径"><span class="ok${f.ok ? '' : ' bad'}">${f.ok ? '就绪' : '找不到文件'}</span></div>`).join('');
+  const card = (m) => `<div class="mcard"><div class="mhead"><b>${esc(m.label)}</b><span class="state${m.installed ? '' : ' no'}"><i></i>${m.installed ? '已安装' : '未安装'}</span></div><p class="desc">${esc(m.desc)}</p>${fetchRow(m)}${m.role === 'backup' ? `<div class="muse">${m.langs.map((l) => `<label class="check"><input type="checkbox" data-bk="${m.name}" data-lang="${l}" ${m.use.includes(l) ? 'checked' : ''}><span>用于${LANG[l]}</span></label>`).join('')}${m.installed ? '' : '<span class="faint">未安装时不会使用</span>'}</div>` : ''}${files(m)}</div>`;
   const group = (role) => ms.filter((m) => m.role === role).map(card).join('');
   view.innerHTML = `
   <main class="s-grid">
     <nav class="s-nav" aria-label="设置分类"><a href="#settings" data-j="api">DeepSeek</a><a href="#settings" data-j="models">本地模型</a><a href="#settings" data-j="runtime">运行环境</a><a href="#settings" data-j="terms">校对术语</a></nav>
-    <div class="s-main">
+    <div class="s-main" id="smain">
       <section class="sec" id="api">
-        <div><h2>DeepSeek</h2><p class="desc">开启精度优化时用于校对。只发送字幕文字，音视频不会上传。</p></div>
+        <div><h2>DeepSeek</h2><p class="desc">开启 AI 精度优化时用来写大纲和逐句校对。只发送识别出的文字，音视频不会上传。</p></div>
         <div class="stack">
           <div class="lab"><span>API 密钥</span>
             <div class="key">
               <input class="field mono" id="key" type="password" autocomplete="off" style="flex:1;min-width:220px" placeholder="${c.has_key ? '已保存，粘贴新密钥可替换' : '粘贴 API 密钥'}" aria-label="API 密钥">
               <button class="btn" type="button" id="ksave">保存</button>
-              <button class="btn" type="button" id="ktest">测试连接</button>
-              ${c.has_key ? '<button class="btn ghost" type="button" id="kdel">删除</button>' : ''}
+              <button class="btn" type="button" id="ktest" ${c.has_key ? '' : 'disabled'}>测试连接</button>
+              ${c.has_key ? '<button class="btn ghost danger" type="button" id="kdel">删除</button>' : ''}
             </div>
           </div>
-          <p class="lock"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true"><rect x="2.5" y="6" width="9" height="6.5"></rect><path d="M4.5 6V4a2.5 2.5 0 015 0v2"></path></svg><span id="kstat">${c.has_key ? '密钥已用 Windows DPAPI 加密保存，仅当前账户可解密。' : '保存后用 Windows DPAPI 加密，仅当前账户可解密。'}</span></p>
+          <p class="lock">${I.lock}<span id="kstat">${c.has_key ? '密钥已用 Windows DPAPI 加密保存，只有当前 Windows 账户能解开。' : '保存后用 Windows DPAPI 加密，只有当前 Windows 账户能解开。'}</span></p>
           <div class="two">
             <label class="lab"><span>接口地址</span><input class="field mono" data-cfg="deepseek_url" value="${esc(c.deepseek_url)}"></label>
             <label class="lab"><span>模型</span><input class="field mono" data-cfg="deepseek_model" list="dsmodels" value="${esc(c.deepseek_model)}"><datalist id="dsmodels"></datalist></label>
@@ -501,37 +640,45 @@ async function renderSettings() {
         </div>
       </section>
       <section class="sec" id="models">
-        <div><h2>本地模型</h2><p class="desc">Qwen 是主识别模型。开启精度优化时，勾选的备用模型会各识别一遍，交给 DeepSeek 投票；可以同时选好几个，越多越准，也越慢。修改路径后重新打开此页检查。</p></div>
+        <div><h2>本地模型</h2><p class="desc">Qwen 是主识别模型。开启多模型对照时，勾选的备用模型各识别一遍，校对页逐句列出；同时开启 AI 精度优化，DeepSeek 会按多数一致来校对。备用模型越多越准，也越慢。改了路径后重新打开这一页检查。</p></div>
         <div class="stack">
-          <h3 class="cap">必装</h3>${group('main')}
-          <h3 class="cap">区分说话人时使用</h3>${group('diarize')}
-          <h3 class="cap">备用模型</h3>${group('backup')}
+          <h3>必装</h3>${group('main')}
+          <h3>区分说话人</h3>${group('diarize')}
+          <h3>备用模型</h3>${group('backup')}
         </div>
       </section>
       <section class="sec" id="runtime">
-        <div><h2>运行环境</h2><p class="desc">所有模型都在 GPU 上运行。</p></div>
+        <div><h2>运行环境</h2><p class="desc">所有模型都在显卡上运行。NVIDIA 显卡（驱动 580 以上）用 CUDA，其他显卡用 Vulkan。</p></div>
         <div class="stack">
           <div class="lab"><span>推理后端</span><div class="seg" role="group" aria-label="推理后端" style="align-self:flex-start">
             <button type="button" class="${c.gpu_backend === 'cuda' ? 'on' : ''}" data-back="cuda">CUDA 13</button><button type="button" class="${c.gpu_backend === 'vulkan' ? 'on' : ''}" data-back="vulkan">Vulkan</button>
           </div></div>
-          <label class="lab"><span>运行时目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
+          <label class="lab"><span>运行库目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
-          <div><a class="btn sm" href="#setup">打开安装引导（下载运行库）</a></div>
-          <p class="faint" style="font-size:12px">听写 ${esc(c.version)}</p>
+          <div><a class="btn sm" href="#setup">打开安装引导，下载运行库</a></div>
+          <p class="faint small">听写 ${esc(c.version)}</p>
         </div>
       </section>
       <section class="sec" id="terms">
-        <div><h2>校对术语</h2><p class="desc">人名、地名等固定写法，每行一条，校对时交给 DeepSeek 参考。</p></div>
-        <label class="lab"><span>术语表</span><textarea class="field" data-cfg="glossary" rows="5">${esc(c.glossary)}</textarea></label>
+        <div><h2>校对术语</h2><p class="desc">人名、地名等固定写法，每行一条。Qwen 识别时作为提示，DeepSeek 校对时也会参考。</p></div>
+        <label class="lab"><span>术语表</span><textarea class="field" data-cfg="glossary" rows="6" placeholder="例如：&#10;星月&#10;麦当劳">${esc(c.glossary)}</textarea></label>
       </section>
     </div>
   </main>`;
-  $$('[data-j]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); $('#' + a.dataset.j).scrollIntoView(); }; });
-  $$('[data-cfg]').forEach((i) => { i.onchange = () => api().save_config({ [i.dataset.cfg]: i.value }); });
+  $$('[data-j]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); $('#' + a.dataset.j).scrollIntoView({ behavior: 'smooth' }); }; });
+  // 左边分类跟着滚动位置高亮
+  const spy = () => {
+    const top = $('#smain').getBoundingClientRect().top + 40;
+    let cur = 'api';
+    for (const sec of $$('.sec')) if (sec.getBoundingClientRect().top <= top) cur = sec.id;
+    $$('[data-j]').forEach((a) => a.classList.toggle('cur', a.dataset.j === cur));
+  };
+  $('#smain').onscroll = spy; spy();
+  $$('[data-cfg]').forEach((i) => { i.onchange = async () => { await api().save_config({ [i.dataset.cfg]: i.value }); toast('已保存'); }; });
   $$('[data-src]').forEach((s) => { s.onchange = () => { S.src = s.value; }; });
   watchDownloads();
-  $$('[data-bk]').forEach((i) => { i.onchange = () => api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); });
-  $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); renderSettings(); }; });
+  $$('[data-bk]').forEach((i) => { i.onchange = async () => { await api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); S.cfg = await api().config(); }; });
+  $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); showSys(b.dataset.back); renderSettings(); }; });
   $('#ksave').onclick = async () => {
     const v = $('#key').value.trim();
     if (!v) return toast('请先粘贴密钥');
@@ -539,9 +686,11 @@ async function renderSettings() {
     toast('密钥已加密保存');
     renderSettings();
   };
-  $('#ktest').onclick = async () => {
+  $('#ktest').onclick = async (e) => {
+    e.target.classList.add('busy');
     $('#kstat').textContent = '正在连接…';
     const r = await api().test_key();
+    e.target.classList.remove('busy');
     if (r.error) { $('#kstat').textContent = '连接失败：' + r.error; return; }
     $('#kstat').textContent = '连接正常，可用模型：' + r.models.join('、');
     $('#dsmodels').innerHTML = r.models.map((m) => `<option value="${esc(m)}"></option>`).join('');
@@ -551,8 +700,6 @@ async function renderSettings() {
 }
 
 /* ---------- 首次运行引导：选运行库，下载运行库和必装模型 ---------- */
-const gbs = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1e6)) + ' MB';
-
 async function renderSetup() {
   const info = S.setup = await api().setup_info();
   const srcs = await api().sources();
@@ -561,40 +708,36 @@ async function renderSetup() {
   const gpuText = g
     ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda_ok ? '推荐用 CUDA。' : '驱动低于 580，用不了 CUDA 13：先到 NVIDIA 官网更新驱动，或者选 Vulkan。')
     : '没有检测到 NVIDIA 显卡，推荐用 Vulkan。';
-  const rt = info.runtimes.map((r) => `<label class="mcard" style="display:flex;gap:12px;align-items:flex-start;cursor:pointer"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><span><b>${esc(r.label)}</b>　<span class="faint mono">${r.installed ? '已安装' : gbs(r.size)}</span><br><span class="desc">${esc(r.desc)}</span></span></label>`).join('');
-  const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono">${m.installed ? '已安装' : gbs(m.size)}</span></div>`).join('');
+  const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
+  const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono small" style="text-align:right">${m.installed ? '已安装' : bytes(m.size)}</span></div>`).join('');
   view.innerHTML = `
-  <main class="s-grid" style="grid-template-columns:minmax(0,760px);justify-content:center">
-    <div class="s-main">
-      <section class="sec">
-        <div><h2>第一次使用</h2><p class="desc">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型。下载的文件放在 %LOCALAPPDATA%\\Tingxie，卸载程序时可以选择是否删除。</p></div>
-      </section>
-      <section class="sec">
-        <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
-        <div class="stack">${rt}</div>
-      </section>
-      <section class="sec">
-        <div><h2>2. 必装模型</h2><p class="desc">备用模型和说话人区分模型以后可以在设置里再下。</p></div>
-        <div class="stack">${mods}
-          <label class="lab"><span>模型下载来源（失败时自动换下一个）</span><select class="field" id="msrc" style="width:auto;min-width:260px">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
-        </div>
-      </section>
-      ${info.ffmpeg ? '' : '<section class="sec"><div><h2>FFmpeg</h2><p class="desc err">找不到 FFmpeg。请安装 FFmpeg，或在设置里填写 ffmpeg.exe 的路径。</p></div></section>'}
-      <section class="sec">
-        <div><h2>3. 下载</h2><p class="desc">中途关掉程序也没关系，下次再点下载会接着下。</p></div>
-        <div class="stack">
-          <div id="setst" class="stack"></div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap"><button class="btn solid" type="button" id="setgo">开始下载</button><a class="btn ghost" href="#settings">跳过，在设置里自己填路径</a></div>
-        </div>
-      </section>
-    </div>
-  </main>`;
+  <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\Tingxie。</span></header>
+  <div class="s-main" style="flex:1">
+    <section class="sec">
+      <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
+      <div class="stack">${rt}</div>
+    </section>
+    <section class="sec">
+      <div><h2>2. 必装模型</h2><p class="desc">备用模型和说话人模型以后可以在设置里再下。</p></div>
+      <div class="stack"><div>${mods}</div>
+        <label class="lab"><span>模型下载来源（失败时自动换下一个）</span><select class="field" id="msrc" style="width:auto;min-width:260px">${srcs.map((s) => `<option value="${s.key}" ${s.key === (S.src || 'hf') ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
+      </div>
+    </section>
+    ${info.ffmpeg ? '' : '<section class="sec"><div><h2>FFmpeg</h2></div><p class="err">找不到 FFmpeg。请安装 FFmpeg，或在设置里填写 ffmpeg.exe 的路径。</p></section>'}
+    <section class="sec">
+      <div><h2>3. 下载</h2><p class="desc">中途关掉程序也没关系，下次再点下载会接着下。</p></div>
+      <div class="stack">
+        <div id="setst" class="setst"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn solid" type="button" id="setgo">开始下载</button><a class="btn ghost" href="#settings">跳过，在设置里自己填路径</a></div>
+      </div>
+    </section>
+  </div>`;
   $$('[name="rt"]').forEach((r) => { r.onchange = () => { S.pick = r.value; renderSetup(); }; });
   $('#msrc').onchange = (e) => { S.src = e.target.value; };
   $('#setgo').onclick = async () => {
     if (setupReady()) { location.hash = '#new'; return; }
     await api().save_config({ gpu_backend: S.pick });
-    $('#sys').textContent = S.pick === 'cuda' ? 'GPU · CUDA' : 'GPU · Vulkan';
+    showSys(S.pick);
     if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
     for (const m of S.setup.models) if (!m.installed) await api().download_model(m.name, $('#msrc').value);
     watchSetup();
@@ -621,7 +764,7 @@ async function watchSetup() {
     else if (st.queue.includes(i.name)) t = '排队中';
     else if (st.failed[i.name]) t = '<span class="err">' + esc(st.failed[i.name]) + '</span>';
     else t = '未下载';
-    return `<div style="display:flex;gap:16px;align-items:baseline"><span style="flex:0 0 200px">${esc(i.label)}</span><span class="mono" style="font-size:12px;min-width:0">${t}</span></div>`;
+    return `<div><span>${esc(i.label)}</span><span class="mono small">${t}</span></div>`;
   };
   $('#setst').innerHTML = items.map(line).join('');
   const busy = cur || st.queue.length;
@@ -631,12 +774,13 @@ async function watchSetup() {
   if (busy) S.setT = setTimeout(watchSetup, 1000);
 }
 
-/* ---------- shell ---------- */
+/* ---------- 外壳 ---------- */
 function route() {
   const v = (location.hash || '#new').slice(1);
-  $$('.nav a').forEach((a) => a.classList.toggle('cur', a.dataset.v === v));
+  $$('.nav a').forEach((a) => { const on = a.dataset.v === v; a.classList.toggle('cur', on); if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   if (v === 'progress') renderProgress();
   else if (v === 'review') renderReview();
+  else if (v === 'history') renderHistory();
   else if (v === 'settings') renderSettings();
   else if (v === 'setup') renderSetup();
   else renderNew();
@@ -670,14 +814,25 @@ async function watchDownloads() {
   if (cur || st.queue.length) S.dlT = setTimeout(watchDownloads, 1000);
 }
 
+function showSys(backend) {
+  $('#sys').innerHTML = `${backend === 'cuda' ? 'GPU · CUDA 13' : 'GPU · Vulkan'}<br>听写 ${esc(S.cfg.version)}`;
+}
+
 async function poll() {
   try {
     const s = await api().status();
     const wasRunning = S.status && S.status.running;
     S.status = s;
     if (s.dropped.length) addFiles(s.dropped);
+    const badge = $('#navpct');  // 不在进度页时，导航上也能看到进度
+    badge.hidden = !(s.running && s.current);
+    if (s.running && s.current) badge.textContent = Math.floor(s.current.pct) + '%';
     if (location.hash === '#progress' && (s.running || wasRunning)) renderProgress();
-    if (wasRunning && !s.running && s.finished) { S.job = null; }
+    if (wasRunning && !s.running) {
+      if (s.finished) S.job = null;
+      if (location.hash === '#new' || location.hash === '') renderNew();
+      if (location.hash === '#history') renderHistory();
+    }
   } finally {
     S.pollT = setTimeout(poll, 400);
   }
@@ -685,13 +840,12 @@ async function poll() {
 
 async function boot() {
   S.cfg = await api().config();
-  S.lang = S.cfg.lang; S.opt = S.cfg.opt; S.dia = S.cfg.diarize; S.formats = S.cfg.formats;
-  $('#sys').textContent = S.cfg.gpu_backend === 'cuda' ? 'GPU · CUDA' : 'GPU · Vulkan';
-  $('#sys').title = '听写 ' + S.cfg.version;
+  S.lang = S.cfg.lang; S.opt = S.cfg.opt; S.compare = S.cfg.compare; S.dia = S.cfg.diarize; S.formats = S.cfg.formats;
+  showSys(S.cfg.gpu_backend);
   window.addEventListener('hashchange', route);
   const si = await api().setup_info();  // 运行库或必装模型缺了，先进引导页
   if (!si.runtimes.find((r) => r.key === si.backend).installed || !si.models.every((m) => m.installed)) location.hash = '#setup';
-  window.addEventListener('resize', () => { if (location.hash === '#review') drawWave(); });
+  window.addEventListener('resize', () => { if (location.hash === '#review' && S.job) drawWave(); });
   route();
   poll();
 }
