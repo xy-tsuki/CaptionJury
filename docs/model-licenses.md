@@ -10,7 +10,7 @@
 | MiMo-V2.5-ASR | cstr/mimo-asr-GGUF | MIT | XiaomiMiMo/MiMo-V2.5-ASR | MIT |
 | MiMo 音频编码器 | cstr/mimo-tokenizer-GGUF | MIT | XiaomiMiMo/MiMo-Audio-Tokenizer | MIT |
 | Whisper large-v3 | ggerganov/whisper.cpp | MIT | openai/whisper-large-v3 | Apache-2.0（Hugging Face 页）；OpenAI 代码仓库为 MIT |
-| Parakeet CTC 1.1B ja | cstr/parakeet-ctc-1.1b-ja-GGUF | Apache-2.0 | grider-transwithai/parakeet-ctc-1.1b-ja | Apache-2.0 |
+| Parakeet CTC 1.1B ja（2026-11-12 起程序不再使用，备份里仍保留） | cstr/parakeet-ctc-1.1b-ja-GGUF | Apache-2.0 | grider-transwithai/parakeet-ctc-1.1b-ja | Apache-2.0 |
 
 所有仓库都不是 gated（不需要登录同意条款就能下载）。
 

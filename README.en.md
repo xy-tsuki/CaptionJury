@@ -9,7 +9,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 ## Features
 
 - **Mixed Chinese and Japanese**: the main model, Qwen3-ASR 1.7B, handles sentences that switch between the two languages. A forced-alignment model times every character, and sentences are split at punctuation and pauses.
-- **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper and Parakeet for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
+- **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
 - **AI accuracy mode** (optional): DeepSeek writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and DeepSeek then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
 - **Speaker labels** (optional): MOSS-Transcribe-Diarize tells speakers apart and labels each subtitle.
 - **Nothing Qwen missed is dropped**: passages that other models heard but Qwen did not are listed as uncertain subtitles, which you can delete if they are wrong.
@@ -20,7 +20,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 - Windows 10 / 11, 64-bit.
 - A dedicated GPU: NVIDIA cards use the CUDA runtime (driver 580 or newer); AMD, Intel and older NVIDIA cards use the Vulkan runtime.
-- Disk: about 4 GB for the required parts; backup and speaker models are extra (MiMo 4.9 GB; Whisper, Parakeet and MOSS about 1.1 GB each).
+- Disk: about 4 GB for the required parts; backup and speaker models are extra (MiMo 4.9 GB; Whisper and MOSS about 1.1 GB each).
 - Tested on an RTX 3060 Laptop GPU (12 GB VRAM); it uses about 6 GB of VRAM while running.
 
 ## Install
@@ -33,7 +33,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 1. **New** (新建): drop or pick files, choose the language (Chinese / Japanese / Chinese + Japanese), tick multi-model comparison (多模型对照), AI accuracy mode (AI 精度优化) and speaker labels if wanted, choose subtitle formats, and start. Subtitles are written next to the source file.
 2. **Progress** (进度): one bar per model with an estimate of the time left; you can pause or cancel.
-3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. Click "Export subtitles" (导出字幕) and pick the formats when done.
+3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. An uncertain line becomes "confirmed" once you edit it or click "mark as confirmed" (标为已确认). Click "Export subtitles" (导出字幕) and pick the formats when done.
 4. **History** (历史): past results, which you can reopen for review, export, show in Explorer, or delete (only the saved result is deleted; the source file and exported subtitles stay).
 
 AI accuracy mode needs DeepSeek: enter a DeepSeek API key in Settings (设置). The key is encrypted with Windows DPAPI, so only your Windows account can decrypt it. Only the recognised text is sent to DeepSeek, never the audio or video.
@@ -64,5 +64,5 @@ Build the installer with `powershell -ExecutionPolicy Bypass -File packaging\bui
 ## Credits and licenses
 
 - Speech recognition runtime: [CrispASR](https://github.com/CrispStrobe/CrispASR).
-- Models: Qwen3-ASR, Qwen3-ForcedAligner, MiMo-V2.5-ASR, Whisper large-v3, Parakeet CTC 1.1B ja and MOSS-Transcribe-Diarize; sources and licenses are listed in [docs/model-licenses.md](docs/model-licenses.md).
+- Models: Qwen3-ASR, Qwen3-ForcedAligner, MiMo-V2.5-ASR, Whisper large-v3 and MOSS-Transcribe-Diarize; sources and licenses are listed in [docs/model-licenses.md](docs/model-licenses.md).
 - The installer bundles FFmpeg (GPL); third-party licenses ship with it in the `licenses` folder.

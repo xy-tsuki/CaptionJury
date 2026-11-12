@@ -9,7 +9,7 @@
 ## 能做什么
 
 - **中日混说**：主模型 Qwen3-ASR 1.7B 一句话里夹着中文和日语也能听，配强制对齐模型给每个字标时间，按标点和停顿断句。
-- **多模型对照**（可选）：按语言加跑备用模型（中文 MiMo、Whisper，日语 Whisper、Parakeet，可在设置里勾选），校对页逐句列出各模型的写法，一键采用。
+- **多模型对照**（可选）：按语言加跑备用模型（中文 MiMo、Whisper，日语 Whisper，可在设置里勾选），校对页逐句列出各模型的写法，一键采用。
 - **AI 精度优化**（可选）：DeepSeek 先写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后 DeepSeek 按多数一致逐句校对。DeepSeek 的修改和识别结果对不上时不直接采用，标成"存疑"交给你选。和多模型对照一起开时，参考的结果更多，效果最好。
 - **区分说话人**（可选）：用 MOSS-Transcribe-Diarize 分出说话人，标到每条字幕上。
 - **Qwen 漏掉的话不丢**：其他模型听到、Qwen 没识别出的段落，单独列成存疑字幕，用不上可以删。
@@ -20,7 +20,7 @@
 
 - Windows 10 / 11，64 位。
 - 独立显卡：NVIDIA 显卡用 CUDA 版运行库（显卡驱动 580 以上），AMD、Intel 或较老的 NVIDIA 显卡用 Vulkan 版。
-- 硬盘：必装部分约 4 GB；备用模型和说话人模型另算（MiMo 4.9 GB，Whisper、Parakeet、MOSS 各约 1.1 GB）。
+- 硬盘：必装部分约 4 GB；备用模型和说话人模型另算（MiMo 4.9 GB，Whisper、MOSS 各约 1.1 GB）。
 - 作者在 RTX 3060 Laptop（12 GB 显存）上测试，运行时占用约 6 GB 显存。
 
 ## 安装
@@ -33,7 +33,7 @@
 
 1. **新建**：拖入或选择文件，选识别语言（中文 / 日语 / 中文 + 日语），按需勾选"多模型对照""AI 精度优化"和"区分说话人"，选字幕格式，开始转写。字幕写在源文件旁边。
 2. **进度**：每个模型一条进度条，显示预计剩余时间，可以暂停或取消。
-3. **校对**：左边是预览和各模型写法的对照，右边是字幕列表，可以只看"存疑"或"已修正"的条目。改完点"导出字幕"，选好格式导出。
+3. **校对**：左边是预览和各模型写法的对照，右边是字幕列表，可以只看"存疑"或"已修正"的条目。存疑的条目改过文字或点"标为已确认"后变成"已确认"。改完点"导出字幕"，选好格式导出。
 4. **历史**：列出以前的识别结果，可以打开校对、导出、打开源文件所在文件夹，或者删除记录（只删程序里保存的结果，不动源文件和导出的字幕）。
 
 AI 精度优化要用 DeepSeek：在"设置"里填 DeepSeek API 密钥。密钥用 Windows DPAPI 加密保存，只有当前 Windows 账户能解开。发给 DeepSeek 的只有识别出的文字，不上传音视频。
@@ -64,5 +64,5 @@ python -m venv $env:LOCALAPPDATA\Tingxie\venv
 ## 致谢与许可证
 
 - 语音识别运行库：[CrispASR](https://github.com/CrispStrobe/CrispASR)。
-- 模型：Qwen3-ASR、Qwen3-ForcedAligner、MiMo-V2.5-ASR、Whisper large-v3、Parakeet CTC 1.1B ja、MOSS-Transcribe-Diarize，来源和许可证见 [docs/model-licenses.md](docs/model-licenses.md)。
+- 模型：Qwen3-ASR、Qwen3-ForcedAligner、MiMo-V2.5-ASR、Whisper large-v3、MOSS-Transcribe-Diarize，来源和许可证见 [docs/model-licenses.md](docs/model-licenses.md)。
 - 安装包自带 FFmpeg（GPL），第三方许可证随安装包放在 `licenses` 目录。
