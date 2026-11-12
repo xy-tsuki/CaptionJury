@@ -15,7 +15,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, download, models, pipeline, store, subtitles
+from core import deepseek, download, lines, models, pipeline, store, subtitles
 from core.version import VERSION
 
 # 打包成 exe 后，界面文件在 PyInstaller 解出的目录（sys._MEIPASS）里
@@ -228,12 +228,22 @@ class Api:
 
     def job(self, jid):
         j = store.load_job(jid)
+        if lines.ensure(j):  # 旧任务，或者改了每条字数：按现在的字数拆好再给校对页
+            store.save_job(j)
         peaks = store.JOBS / jid / "peaks.json"
         j["peaks"] = json.loads(peaks.read_text(encoding="utf-8")) if peaks.exists() else []
         j["token"] = TOKEN
+        n = subtitles.line_max(j)
         for s in j["segments"]:  # 早先的任务，理由里还是 primary、moss 这些字段名
             s["why"] = deepseek.readable(s.get("why") or "")
+            s["cut"] = subtitles.breaks(s, n)  # 导出时的拆分位置，只给校对页看，不存
         return j
+
+    def cuts(self, jid):
+        """每句导出时的拆分位置 {句子编号: [下标, ...]}。改了文字或每条字数以后，校对页用它刷新标记。"""
+        j = store.load_job(jid)
+        n = subtitles.line_max(j)
+        return {s["id"]: subtitles.breaks(s, n) for s in j["segments"]}
 
     def update_text(self, jid, seg_id, text):
         """用户改了一条字幕的文字（手动填写或采用某个模型的写法）。存疑的条目改过就算用户确认过，返回新的状态。"""
@@ -331,7 +341,7 @@ class Api:
         store.save_job(j)
 
     def set_line_max(self, jid, kind):
-        """导出时每条字幕的字数（wide 横屏 / tall 竖屏 / full 不限）。也记进设置，下次新建的任务沿用。"""
+        """每条字幕的字数（wide 横屏 / tall 竖屏 / full 不限）。校对页随后重新打开任务时按新字数重新拆。也记进设置，下次新建的任务沿用。"""
         if kind not in subtitles.LINE_MAX:
             return
         j = store.load_job(jid)

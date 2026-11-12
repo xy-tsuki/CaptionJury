@@ -183,6 +183,32 @@ assert [[s["qwen"] for s in g] for g in gs] == [["你好。", "走吧。"], ["�
 from core.pipeline import _echoes, _hint
 h = _hint(["零重力座椅", "问界M9", "问界M8"])
 assert _echoes("零重力座椅，问界M9，问界M8。", h) and not _echoes("这个零重力座椅真的很舒服，我们试一下吧", h) and not _echoes("嗯。", h)
+# 校对页标的拆分位置和导出的切法一致
+s = {"text": "つーかさ別にさ見たくないなら見なきゃ良くない？", "a": 0, "b": 4}
+cut = subtitles.breaks(s, 12)
+assert cut and [x[2] for x in subtitles.cues([s], max_chars=12)] == [s["text"][a:b] for a, b in zip([0] + cut, cut + [len(s["text"])])]
+assert subtitles.breaks({"text": "短句。"}, 12) == []
+
+# 校对页按每条字数拆好；换字数时拼回原句再拆，文字和各模型的写法都能还原
+from core import lines  # noqa: E402
+q = "いつもなんかキモいとかさつまんないとか私に言ってきてさ"
+long = {"id": 1, "text": q + "、", "qwen": q, "ct": [i * 0.1 for i in range(len(q))], "a": 0.0, "b": 3.0,
+        "lang": "ja", "status": "fix", "why": "改了", "speaker": "", "whisper": q, "alts": [{"field": "moss", "text": "x"}]}
+short = {"id": 2, "text": "はい。", "qwen": "はい。", "ct": [3.2, 3.3, None], "a": 3.2, "b": 3.6, "lang": "ja", "status": "ok", "why": ""}
+job = {"segments": [dict(long), dict(short)], "line_max": "tall"}
+assert lines.ensure(job) and not lines.ensure(job)
+segs = job["segments"]
+assert len(segs) == 4 and [s["id"] for s in segs] == [1, 2, 3, 4] and all(len(s["text"]) <= 12 for s in segs), [s["text"] for s in segs]
+assert "".join(s["text"] for s in segs[:3]) == long["text"] and "".join(s["whisper"] for s in segs[:3]) == q
+assert all(len(s["ct"]) == len(s["qwen"]) for s in segs) and segs[0]["alts"] and "alts" not in segs[1]
+assert segs[0]["a"] == 0.0 and segs[2]["b"] == 3.0 and segs[0]["b"] == segs[1]["a"] == segs[1]["ct"][0]
+segs[1]["status"] = "ask"
+job["line_max"] = "full"
+lines.ensure(job)
+back = job["segments"]
+assert len(back) == 2 and back[0]["text"] == long["text"] and back[0]["qwen"] == q and back[0]["whisper"] == q, back
+assert back[0]["status"] == "ask" and back[0]["ct"] == long["ct"] and len(back[0]["alts"]) == 1 and "src" not in back[0]
+
 # 语气词“さ”不放在条首
 t = "つーかさ別にさ見たくないなら見なきゃ良くない？"
 assert all(t[a] != "さ" for a, _ in subtitles.split_line(t, [None] * len(t), 18))

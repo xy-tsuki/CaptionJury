@@ -12,7 +12,7 @@ import uuid
 import wave
 from pathlib import Path
 
-from . import chunks, deepseek, models, progress, sentences, speakers, store, subtitles
+from . import chunks, deepseek, lines, models, progress, sentences, speakers, store, subtitles
 
 NO_WINDOW = 0x08000000
 PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -292,6 +292,7 @@ class Queue:
             # 只留每个字的开始时间（和 qwen 逐字对应），导出时按它拆长句；用户改了文字也能对回去
             s["ct"] = [round(t[0], 2) if t else None for t in s.pop("times", None) or []]
             s.pop("spoken_end", None)
+        lines.ensure(job)  # 校对页按导出的每条字数拆好
         store.save_job(job)  # 先存一份，导出出错也不丢结果
         job["written"] = subtitles.export(job, formats)
         moved = [p for p in job["written"] if Path(p).parent != Path(job["source"]).parent]

@@ -519,7 +519,7 @@ async function renderReview() {
       <div class="e-bar">
         <select class="pick" id="jobsel" aria-label="切换转写结果">${options}</select>
         <div class="seg small" role="group" aria-label="筛选" id="flt"></div>
-        <div class="sp"><select class="pick" id="linemax" aria-label="导出时每条字幕的字数" title="导出时一句太长就拆成几条字幕，在标点或停顿处拆开">${Object.entries(LINE_KINDS).map(([k, l]) => `<option value="${k}" ${(j.line_max || 'wide') === k ? 'selected' : ''}>${l}</option>`).join('')}</select><label class="check tags" title="导出的字幕去掉全部句号，逗号和日语顿号改成空格"><input type="checkbox" id="nopunct" ${j.no_punct ? 'checked' : ''}><span>去掉标点</span></label>${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags ? 'checked' : ''}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
+        <div class="sp"><select class="pick" id="linemax" aria-label="导出时每条字幕的字数" title="导出时一句太长就拆成几条字幕，在标点或停顿处拆开；列表里的竖线就是拆开的位置">${Object.entries(LINE_KINDS).map(([k, l]) => `<option value="${k}" ${(j.line_max || 'wide') === k ? 'selected' : ''}>${l}</option>`).join('')}</select><label class="check tags" title="导出的字幕去掉全部句号，逗号和日语顿号改成空格"><input type="checkbox" id="nopunct" ${j.no_punct ? 'checked' : ''}><span>去掉标点</span></label>${hasSpeakers() ? `<label class="check tags"><input type="checkbox" id="tags" ${j.speaker_tags ? 'checked' : ''}><span>字幕带说话人</span></label>` : ''}<button class="btn sm" type="button" id="fr" aria-expanded="false">${I.find}查找替换</button>${exportMenu(j.id)}</div>
       </div>
       <div class="frbar" id="frbar" hidden>
         <input class="field" id="f1" placeholder="查找" aria-label="查找"><input class="field" id="f2" placeholder="替换为" aria-label="替换为"><button class="btn sm" type="button" id="frgo">全部替换</button>
@@ -549,7 +549,16 @@ async function renderReview() {
   };
   $('#jobsel').onchange = async (e) => { await openJob(e.target.value); renderReview(); };
   if ($('#tiprev')) $('#tiprev').onclick = (e) => { tipHide('review'); e.currentTarget.parentElement.remove(); };
-  $('#linemax').onchange = async (e) => { j.line_max = e.target.value; await api().set_line_max(j.id, e.target.value); };
+  $('#linemax').onchange = async (e) => {
+    // 换了每条字数：服务器按新字数重新拆，列表跟着变；选中的条目和播放位置尽量保持
+    const m = $('#media'), pos = m ? m.currentTime : 0, at = current() ? current().a : 0;
+    await api().set_line_max(j.id, e.target.value);
+    await openJob(j.id);
+    const hit = S.job.segments.find((s) => s.b > at + 0.01) || S.job.segments[0];
+    if (hit) S.sel = hit.id;
+    await renderReview();
+    if ($('#media')) $('#media').currentTime = pos;
+  };
   $('#nopunct').onchange = async (e) => { j.no_punct = e.target.checked; await api().set_no_punct(j.id, e.target.checked); };
   if ($('#tags')) $('#tags').onchange = async (e) => { j.speaker_tags = e.target.checked; await api().set_speaker_tags(j.id, e.target.checked); };
   $('#fr').onclick = () => { const b = $('#frbar'); b.hidden = !b.hidden; $('#fr').setAttribute('aria-expanded', !b.hidden); if (!b.hidden) $('#f1').focus(); };
@@ -591,12 +600,27 @@ function drawFilters() {
   $$('[data-f]').forEach((b) => { b.onclick = () => { S.flt = b.dataset.f; drawFilters(); drawList(); }; });
 }
 
+/* 句子文字，导出时拆开的地方插一条竖线 */
+function cutText(s) {
+  const at = s.cut || [];
+  if (!at.length) return esc(s.text);
+  let out = '', p = 0;
+  at.forEach((x) => { out += esc(s.text.slice(p, x)) + '<i class="cut" title="导出时在这里拆成两条字幕"></i>'; p = x; });
+  return out + esc(s.text.slice(p));
+}
+
+async function refreshCuts() {
+  const m = await api().cuts(S.job.id);
+  S.job.segments.forEach((s) => { s.cut = m[s.id] || []; });
+  drawList();
+}
+
 function drawList() {
   const rows = S.job.segments.filter((s) => S.flt === 'all' || s.status === S.flt);
   $('#list').innerHTML = rows.map((s) => `<button type="button" class="row ${stc(s.status)}${s.id === S.sel ? ' sel' : ''}" data-id="${s.id}">
       <span class="ix mono">${s.id}</span>
       <span class="tc mono">${hms(s.a, true)}<br>${hms(s.b, true)}</span>
-      <span class="tx" lang="${langAttr(s.lang)}">${hasSpeakers() ? `<small class="spk">${esc(speakerName(s) || '未标注')}</small>` : ''}${esc(s.text)}</span>
+      <span class="tx" lang="${langAttr(s.lang)}">${hasSpeakers() ? `<small class="spk">${esc(speakerName(s) || '未标注')}</small>` : ''}${cutText(s)}</span>
       <span class="stt"><i class="dot"></i>${TAGS[s.status] || '初稿'}</span></button>`).join('')
     || '<p class="none-hit">这一类已经清空了。</p>';
   $$('.row').forEach((r) => { r.onclick = () => select(+r.dataset.id, true); });
@@ -675,8 +699,7 @@ async function reloadSpeakers() {
 }
 
 /* 改入点或出点；服务器会把时间夹在前后两条之间，以返回的为准 */
-async function setTimes(k, t) {
-  const s = current();
+async function setTimes(k, t, s = current()) {
   const want = k === 'a' ? [t, s.b] : [s.a, t];
   const got = await api().set_times(S.job.id, s.id, want[0], want[1]);
   if (Math.abs(got[k] - t) > 0.0005) toast(k === 'a' ? '入点不能早于上一条的出点，也不能晚于出点' : '出点不能晚于下一条的入点，也不能早于入点');
@@ -708,6 +731,7 @@ async function setText(t) {
   const st = await api().update_text(S.job.id, s.id, t);
   if (st) s.status = st;  // 存疑的条目改过以后变成已确认
   drawFilters(); drawList(); drawCmp(); drawWave();
+  refreshCuts();
 }
 
 async function confirmSeg() {
@@ -761,13 +785,54 @@ function drawWave() {
   }
   $('#wt').innerHTML = [0, 8, 16, 24, 32].map((d) => `<span>${hms(t0 + d)}</span>`).join('');
   const vis = S.job.segments.filter((x) => x.b > t0 && x.a < t0 + SPAN);
-  $('#ws').innerHTML = vis.map((x) => `<button type="button" class="blk ${stc(x.status)}${x.id === S.sel ? ' sel' : ''}" style="left:${(x.a - t0) / SPAN * 100}%;width:${(x.b - x.a) / SPAN * 100}%" data-b="${x.id}" aria-label="跳到第 ${x.id} 条" title="${esc(x.text)}">${x.id}</button>`).join('') + '<span class="head" id="head"></span>';
+  $('#ws').innerHTML = vis.map((x) => `<button type="button" class="blk ${stc(x.status)}${x.id === S.sel ? ' sel' : ''}" style="left:${(x.a - t0) / SPAN * 100}%;width:${(x.b - x.a) / SPAN * 100}%" data-b="${x.id}" aria-label="跳到第 ${x.id} 条" title="${esc(x.text)}">${x.id}<i class="eg l" title="拖动改入点"></i><i class="eg r" title="拖动改出点"></i></button>`).join('') + '<span class="head" id="head"></span>';
   $$('[data-b]').forEach((b) => { b.onclick = () => select(+b.dataset.b, true); });
+  bindEdges();
   // 总览：整段录音里已修正和存疑的位置，加一个框标出下面波形显示的范围
   const T = total();
   $('#ov').innerHTML = S.job.segments.filter((x) => x.status === 'ask' || x.status === 'fix').map((x) => `<i class="${stc(x.status)}" style="left:${x.a / T * 100}%;width:${(x.b - x.a) / T * 100}%"></i>`).join('')
     + `<span class="vw" style="left:${t0 / T * 100}%;width:${Math.min(100, SPAN / T * 100)}%"></span>`;
   moveHead();
+}
+
+/* 拖时间条的左右边缘改入点、出点：拖动时只挪方块，松手再保存 */
+function bindEdges() {
+  $$('#ws .eg').forEach((h) => {
+    h.onclick = (e) => e.stopPropagation();  // 拖完松手不算点击方块
+    h.onpointerdown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const blk = h.parentElement, k = h.classList.contains('l') ? 'a' : 'b';
+      const segs = S.job.segments, i = segs.findIndex((x) => x.id === +blk.dataset.b), s = segs[i];
+      const prev = segs[i - 1], next = segs[i + 1];
+      // 和相邻一条首尾相连时，交界处一起移动
+      const mate = k === 'a' ? (prev && s.a - prev.b < 0.02 ? prev : null) : (next && next.a - s.b < 0.02 ? next : null);
+      const mk = k === 'a' ? 'b' : 'a';
+      const lo = k === 'a' ? (mate ? mate.a + 0.2 : prev ? prev.b : 0) : s.a + 0.2;
+      const hi = k === 'a' ? s.b - 0.2 : (mate ? mate.b - 0.2 : next ? next.a : total());
+      const mblk = mate && $(`#ws [data-b="${mate.id}"]`);
+      const box = $('#ws').getBoundingClientRect(), t0 = windowStart();
+      const place = (el, a, b) => { el.style.left = (a - t0) / SPAN * 100 + '%'; el.style.width = (b - a) / SPAN * 100 + '%'; };
+      let t = s[k];
+      h.setPointerCapture(e.pointerId);
+      h.onpointermove = (ev) => {
+        t = Math.min(hi, Math.max(lo, t0 + (ev.clientX - box.left) / box.width * SPAN));
+        place(blk, k === 'a' ? t : s.a, k === 'b' ? t : s.b);
+        if (mblk) place(mblk, mk === 'a' ? t : mate.a, mk === 'b' ? t : mate.b);
+      };
+      h.onpointerup = h.onpointercancel = async () => {
+        h.onpointermove = h.onpointerup = h.onpointercancel = null;
+        if (Math.abs(t - s[k]) < 0.005) return;
+        t = Math.round(t * 1000) / 1000;
+        S.sel = s.id;
+        // 先让出位置的那条先改，免得服务器按旧的相邻时间把另一条夹住
+        const shrink = (k === 'a') === (t > s.a);
+        if (mate && !shrink) await setTimes(mk, t, mate);
+        await setTimes(k, t, s);
+        if (mate && shrink) await setTimes(mk, t, mate);
+      };
+    };
+  });
 }
 
 function moveHead() {

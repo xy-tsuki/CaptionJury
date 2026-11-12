@@ -112,6 +112,39 @@ def plain(text):
     return re.sub(r" {2,}", " ", text).strip()
 
 
+def pieces(s, max_chars=MAX_CHARS):
+    """把一句拆成不超过 max_chars 个字的几段，返回 [(起, 止, 开始时间, 结束时间)]，下标对应 s["text"]。
+
+    拆开处的时间用那个字的开始时间（ct），对不上时按字数分摊，并保证每段至少 0.2 秒。
+    """
+    raw = s["text"]
+    lead = len(raw) - len(raw.lstrip())
+    text = raw.strip()
+    if not text:
+        return []
+    times = char_times(raw, s.get("qwen", ""), s.get("ct"))[lead:lead + len(text)]
+    spans = split_line(text, times, max_chars)
+    a, b = s["a"], s["b"]
+    starts = [a]
+    for x, _ in spans[1:]:
+        guess = a + (b - a) * x / len(text)  # 按字数分摊的时间
+        known = times[x] if times[x] is not None else guess
+        starts.append(min(max(known, starts[-1] + 0.2), b - 0.2) if b - starts[-1] > 0.4 else guess)
+    return [(x + lead, y + lead, t0, t1) for (x, y), t0, t1 in zip(spans, starts, starts[1:] + [b])]
+
+
+def breaks(s, max_chars=MAX_CHARS):
+    """导出时这句在哪些字前面拆开（下标对应 s["text"]），给校对页标出来。和 cues 用同一套切法。"""
+    if len(s["text"].strip()) <= max_chars:
+        return []
+    return [x for x, _, _, _ in pieces(s, max_chars)[1:]]
+
+
+def line_max(job):
+    """这个任务导出时每条字幕最多几个字。"""
+    return LINE_MAX.get(job.get("line_max") or "wide", MAX_CHARS)
+
+
 def cues(segments, names=None, no_punct=False, max_chars=MAX_CHARS):
     """把句子排成字幕条。超过 max_chars 个字的句子拆开，按逐字时间（ct）定拆开处的时间，没有逐字时间时按字数分摊。
 
@@ -119,22 +152,9 @@ def cues(segments, names=None, no_punct=False, max_chars=MAX_CHARS):
     """
     result = []
     for s in segments:
-        raw = s["text"]
-        lead = len(raw) - len(raw.lstrip())
-        text = raw.strip()
-        if not text:
-            continue
-        times = char_times(raw, s.get("qwen", ""), s.get("ct"))[lead:lead + len(text)]
-        spans = split_line(text, times, max_chars)
-        a, b = s["a"], s["b"]
         who = (names or {}).get(s.get("speaker"), "")
-        starts = [a]
-        for x, _ in spans[1:]:
-            guess = a + (b - a) * x / len(text)  # 按字数分摊的时间
-            known = times[x] if times[x] is not None else guess
-            starts.append(min(max(known, starts[-1] + 0.2), b - 0.2) if b - starts[-1] > 0.4 else guess)
-        for (x, y), t0, t1 in zip(spans, starts, starts[1:] + [b]):
-            piece = text[x:y].strip()
+        for x, y, t0, t1 in pieces(s, max_chars):
+            piece = s["text"][x:y].strip()
             if piece:
                 result.append((t0, t1, plain(piece) if no_punct else piece, who))
     return result
@@ -213,7 +233,7 @@ def export(job, formats):
     """写出各格式的字幕，返回写好的路径。优先写在源文件旁边，写不进去就写到 FALLBACK。"""
     src = Path(job["source"])
     c = cues(job["segments"], job.get("speakers") if job.get("speaker_tags") else None, job.get("no_punct", False),
-             LINE_MAX.get(job.get("line_max") or "wide", MAX_CHARS))
+             line_max(job))
     known = job.setdefault("exports", {})
     written = []
     for fmt in formats:
