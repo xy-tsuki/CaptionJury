@@ -67,7 +67,7 @@ def fetch_file(f, dest, source, on_bytes=lambda n: None, cancelled=lambda: False
         done = 0
     on_bytes(done)
     own = client is None
-    client = client or httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30, read=60), headers={"User-Agent": "tingxie-downloader"})
+    client = client or httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30, read=60), headers={"User-Agent": "captionjury-downloader"})
     try:
         with open(part, "ab") as out:
             start = 0

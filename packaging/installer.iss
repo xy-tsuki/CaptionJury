@@ -2,6 +2,7 @@
 ;   ISCC.exe /DAppVersion=0.1.0 /DSrc=<dist 目录> /DOut=<输出目录> packaging\installer.iss
 ; 安装时让用户选"只为我安装"（默认，不需要管理员）或"为所有用户安装"。
 ; 程序本身装在安装目录；模型、运行库、设置和任务都在 %LOCALAPPDATA%\Tingxie，卸载时询问是否删除。
+; 旧名「听写 / Tingxie」：AppId 和数据目录沿用，升级时装在原来的目录里，旧的快捷方式和 Tingxie.exe 删掉。
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -15,14 +16,14 @@
 
 [Setup]
 AppId={{6B7B2C1E-3F0A-4D2B-9C5E-2A8F1D4E7B90}
-AppName=听写
+AppName=字幕对照组
 AppVersion={#AppVersion}
-AppVerName=听写 {#AppVersion}
+AppVerName=字幕对照组 {#AppVersion}
 AppPublisher=星月Tsuki
-AppPublisherURL=https://github.com/xy-tsuki/tingxie
-AppSupportURL=https://github.com/xy-tsuki/tingxie/issues
-DefaultDirName={autopf}\Tingxie
-DefaultGroupName=听写
+AppPublisherURL=https://github.com/xy-tsuki/CaptionJury
+AppSupportURL=https://github.com/xy-tsuki/CaptionJury/issues
+DefaultDirName={autopf}\CaptionJury
+DefaultGroupName=字幕对照组
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
@@ -30,10 +31,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#Out}
-OutputBaseFilename=Tingxie-Setup-{#AppVersion}
+OutputBaseFilename=CaptionJury-Setup-{#AppVersion}
 SetupIconFile=icon.ico
-UninstallDisplayIcon={app}\Tingxie.exe
-UninstallDisplayName=听写 {#AppVersion}
+UninstallDisplayIcon={app}\CaptionJury.exe
+UninstallDisplayName=字幕对照组 {#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -49,19 +50,23 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [InstallDelete]
 ; 升级时先清掉旧版本的依赖文件，免得残留
 Type: filesandordirs; Name: "{app}\_internal"
+; 改名前（听写 / Tingxie）留下的程序和快捷方式
+Type: files; Name: "{app}\Tingxie.exe"
+Type: files; Name: "{autoprograms}\听写.lnk"
+Type: files; Name: "{autodesktop}\听写.lnk"
 
 [Files]
-; build\dist\Tingxie 的结构和安装后一样：Tingxie.exe、_internal、ffmpeg、licenses
-Source: "{#Src}\Tingxie\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; build\dist\CaptionJury 的结构和安装后一样：CaptionJury.exe、_internal、ffmpeg、licenses
+Source: "{#Src}\CaptionJury\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Src}\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedWebView2
 
 [Icons]
-Name: "{autoprograms}\听写"; Filename: "{app}\Tingxie.exe"
-Name: "{autodesktop}\听写"; Filename: "{app}\Tingxie.exe"; Tasks: desktopicon
+Name: "{autoprograms}\字幕对照组"; Filename: "{app}\CaptionJury.exe"
+Name: "{autodesktop}\字幕对照组"; Filename: "{app}\CaptionJury.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "正在安装 Microsoft Edge WebView2 运行时……"; Check: NeedWebView2; Flags: waituntilterminated
-Filename: "{app}\Tingxie.exe"; Description: "启动听写"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\CaptionJury.exe"; Description: "启动字幕对照组"; Flags: nowait postinstall skipifsilent
 
 [Code]
 const

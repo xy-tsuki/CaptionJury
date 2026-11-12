@@ -1,4 +1,4 @@
-"""生成程序图标 packaging/icon.ico：深色方块上一个白色的"听"字。改了样式就重新跑一次，把生成的 ico 一起提交。
+"""生成程序图标 packaging/icon.ico：深色方块上一个白色的"对"字（对照）。改了样式就重新跑一次，把生成的 ico 一起提交。
 
     python packaging/make_icon.py
 """
@@ -16,9 +16,9 @@ def draw(size):
     r = max(2, size // 6)
     d.rounded_rectangle((0, 0, size - 1, size - 1), r, fill=(31, 35, 41, 255))
     font = ImageFont.truetype(FONT, int(size * 0.66))
-    box = d.textbbox((0, 0), "听", font=font)
+    box = d.textbbox((0, 0), "对", font=font)
     w, h = box[2] - box[0], box[3] - box[1]
-    d.text(((size - w) / 2 - box[0], (size - h) / 2 - box[1]), "听", font=font, fill=(255, 255, 255, 255))
+    d.text(((size - w) / 2 - box[0], (size - h) / 2 - box[1]), "对", font=font, fill=(255, 255, 255, 255))
     # 底部一条浅色横线，示意字幕
     y = int(size * 0.86)
     d.rectangle((int(size * 0.22), y, int(size * 0.78), y + max(1, size // 32)), fill=(120, 200, 255, 255))

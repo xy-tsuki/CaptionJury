@@ -15,7 +15,7 @@ import app
 api = app.Api()
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
 threading.Thread(target=srv.serve_forever, daemon=True).start()
-win = webview.create_window("听写", f"http://127.0.0.1:{srv.server_port}/{app.TOKEN}/", js_api=api, hidden=True)
+win = webview.create_window("字幕对照组", f"http://127.0.0.1:{srv.server_port}/{app.TOKEN}/", js_api=api, hidden=True)
 api._window = win
 
 

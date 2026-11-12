@@ -1,10 +1,10 @@
-# 听写
+# 字幕对照组 · CaptionJury
 
-[English](README.en.md)
+[English](README.en.md)　日本語名：字幕くらべラボ
 
 把中日混说的视频或音频转成带时间轴的字幕（SRT / ASS / VTT / TXT）的 Windows 桌面工具。语音识别全部在本机显卡上跑，音视频不出电脑；可选让 AI 对照几份识别结果校对文字：用 DeepSeek 等服务商的 API，或者把提示词复制给你订阅的 Claude、ChatGPT 等。
 
-> 名称暂定，目前是 0.x 版本，界面和功能还会变。
+> 目前是 0.x 版本，界面和功能还会变。原名「听写」。
 
 ## 能做什么
 
@@ -27,7 +27,7 @@
 
 ## 安装
 
-1. 在 [Releases](https://github.com/xy-tsuki/tingxie/releases) 下载 `Tingxie-Setup-<版本>.exe`，双击安装。可以只为自己安装（不需要管理员权限），也可以为所有用户安装。
+1. 在 [Releases](https://github.com/xy-tsuki/CaptionJury/releases) 下载 `CaptionJury-Setup-<版本>.exe`，双击安装。可以只为自己安装（不需要管理员权限），也可以为所有用户安装。
 2. 安装包没有代码签名，Windows 可能提示"未知发布者"或被 SmartScreen（Windows 的下载安全检查）拦截，点"更多信息" → "仍要运行"。
 3. 第一次打开会进入引导页：程序检测显卡，推荐 CUDA 或 Vulkan 运行库，然后下载运行库和两个必装模型。模型有三个下载来源（Hugging Face、hf-mirror 镜像、本项目 GitHub 备份），失败会自动换源，中断后可以续传。
 
@@ -47,7 +47,7 @@ AI 精度优化在"设置 → 校对 AI"里选一种方式：
 
 ## 数据放在哪里
 
-程序装在 `%LOCALAPPDATA%\Programs\Tingxie`（只为自己安装时）或 Program Files。运行库、模型、设置和转写任务都在 `%LOCALAPPDATA%\Tingxie`，升级不会动它们；卸载时会问要不要一起删掉。
+程序装在 `%LOCALAPPDATA%\Programs\CaptionJury`（只为自己安装时）或 Program Files。运行库、模型、设置和转写任务都在 `%LOCALAPPDATA%\Tingxie`（沿用旧名），升级不会动它们；卸载时会问要不要一起删掉。
 
 ## 已知限制
 

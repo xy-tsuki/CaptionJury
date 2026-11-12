@@ -1,5 +1,5 @@
-# PyInstaller 打包配置：输出 dist\Tingxie\Tingxie.exe（文件夹模式，启动快，安装包再把整个文件夹装进去）。
-#     python -m PyInstaller packaging/tingxie.spec --noconfirm
+# PyInstaller 打包配置：输出 dist\CaptionJury\CaptionJury.exe（文件夹模式，启动快，安装包再把整个文件夹装进去）。
+#     python -m PyInstaller packaging/captionjury.spec --noconfirm
 # 在仓库根目录运行。
 from pathlib import Path
 
@@ -17,9 +17,9 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Tingxie",
+    name="CaptionJury",
     icon=str(ROOT / "packaging" / "icon.ico"),
     console=False,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="Tingxie", upx=False)
+coll = COLLECT(exe, a.binaries, a.datas, name="CaptionJury", upx=False)

@@ -6,7 +6,7 @@
 import math
 from pathlib import Path
 
-GITHUB_BACKUP = "https://github.com/xy-tsuki/tingxie/releases/download/models-v1/"
+GITHUB_BACKUP = "https://github.com/xy-tsuki/CaptionJury/releases/download/models-v1/"
 PART = 1_900_000_000  # GitHub Release 附件单个最大 2 GB，更大的文件在备份里分成编号的几卷
 
 

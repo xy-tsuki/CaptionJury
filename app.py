@@ -1,4 +1,4 @@
-"""听写: desktop shell. The UI is served on localhost and shown in a WebView2 window."""
+"""字幕对照组（CaptionJury）: desktop shell. The UI is served on localhost and shown in a WebView2 window."""
 import http.server
 import json
 import mimetypes
@@ -476,7 +476,7 @@ def main():
     if "--serve-only" in sys.argv:  # used for browser testing without a window
         print(url, flush=True)
         threading.Event().wait()
-    window = webview.create_window("听写", url, js_api=api, width=1440, height=900, min_size=(1100, 720), background_color="#E8E9EB")
+    window = webview.create_window("字幕对照组", url, js_api=api, width=1440, height=900, min_size=(1100, 720), background_color="#E8E9EB")
     api._window = window
 
     def on_drop(e):
