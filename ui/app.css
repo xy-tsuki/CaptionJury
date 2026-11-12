@@ -112,8 +112,9 @@ textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:1.7}
 .cd.ad .txt{font-weight:500}
 .why{margin-top:8px;font-size:13px;color:var(--fg2);line-height:1.6}
 .e-right{display:flex;flex-direction:column;min-height:0;min-width:0}
-.e-bar{flex:none;height:52px;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid var(--line)}
-.e-bar .sp{margin-left:auto;display:flex;gap:8px}
+.e-bar{flex:none;min-height:52px;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 20px;border-bottom:1px solid var(--line)}
+.e-bar .sp{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.e-bar .pick{min-width:0;flex:0 1 220px}
 .seg.small button{height:32px;padding:0 12px;font-size:12px}
 .list{flex:1;min-height:0;overflow:auto}
 .row{width:100%;display:grid;grid-template-columns:36px 118px minmax(0,1fr) 62px;gap:12px;align-items:center;min-height:60px;padding:8px 20px;background:none;border:0;border-bottom:1px solid var(--line);text-align:left;cursor:pointer}
@@ -218,6 +219,11 @@ textarea.field{height:auto;padding:10px 12px;resize:vertical;line-height:1.7}
 .err{font-size:13px;color:var(--fg);background:var(--accsoft);padding:8px 10px;word-break:break-all}
 .video video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 .video .sub{position:relative}
+/* 音频没有画面：预览区只留一行字幕的高度，把空间让给下面的对照区 */
+.e-left.audio .video{flex:none;min-height:112px;padding:14px 24px}
+.e-left.audio .video .ph{display:none}
+.e-left.audio .video .sub{font-size:18px}
+.e-left.audio .cmp{flex:1;max-height:none}
 .cmp{overflow:auto;flex:none;max-height:46%}
 .final{display:flex;flex-direction:column;gap:6px;margin-top:10px}
 .final textarea{resize:none}

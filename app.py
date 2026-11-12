@@ -160,6 +160,8 @@ class Api:
         peaks = store.JOBS / jid / "peaks.json"
         j["peaks"] = json.loads(peaks.read_text(encoding="utf-8")) if peaks.exists() else []
         j["token"] = TOKEN
+        for s in j["segments"]:  # 早先的任务，理由里还是 primary、moss 这些字段名
+            s["why"] = deepseek.readable(s.get("why") or "")
         return j
 
     def update_text(self, jid, seg_id, text):
@@ -252,6 +254,7 @@ class Api:
         cfg = store.load_config()
         cfg["has_key"] = store.has_key()
         cfg["version"] = VERSION
+        cfg["backups_active"] = {lang: [models.MODELS[k]["short"] for k in models.backups_for(cfg, lang)] for lang in ("zh", "ja")}
         return cfg
 
     def save_config(self, changes):

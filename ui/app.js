@@ -46,16 +46,28 @@ function parseTc(v) {
 }
 
 /* ---------- new job ---------- */
+/* 这次会跑的备用模型：[[语言名, [模型名...]], ...]，按设置里的勾选和已安装的模型 */
+function activeBackups() {
+  const on = (S.cfg && S.cfg.backups_active) || {};
+  return [['zh', '中文'], ['ja', '日语']].filter(([k]) => S.lang === k || S.lang === 'mix').map(([k, l]) => [l, on[k] || []]);
+}
+
 function help() {
   if (!S.opt) return '只运行 Qwen3-ASR，不做 DeepSeek 校对。';
-  if (S.lang === 'zh') return '加跑 MiMo-V2.5-ASR 作为备用，DeepSeek 同时参考两份结果完成校对。';
-  if (S.lang === 'ja') return '加跑 parakeet-ctc-1.1b-ja 作为备用，DeepSeek 同时参考两份结果完成校对。';
-  return '按语言分流：中文句加跑 MiMo，日语句加跑 Parakeet，DeepSeek 逐句对照校对。';
+  const b = activeBackups().map(([l, ms]) => (ms.length ? `${l}句加跑 ${ms.join('、')}` : `${l}没有可用的备用模型（可在设置里勾选）`)).join('，');
+  return `${b}；之后 DeepSeek 写大纲，Qwen 带着大纲里的术语再听一遍，最后 DeepSeek 对照各份结果逐句校对。`;
 }
 
 function renderNew() {
-  const zh = S.lang !== 'ja', ja = S.lang !== 'zh';
   const model = (name, role, on) => `<div class="md ${on ? 'on' : 'off'}"><span class="led"></span><span>${name}</span><span class="r">${on ? role : '不运行'}</span></div>`;
+  // 备用模型一行一个，标明用于哪种语言；没开精度优化时显示"不运行"
+  const backupRows = () => {
+    const uses = {};
+    for (const [l, ms] of activeBackups()) for (const m of ms) (uses[m] = uses[m] || []).push(l);
+    const names = Object.keys(uses);
+    if (!names.length) return model('备用模型', '', false);
+    return names.map((m) => model(m, uses[m].length > 1 ? '中日备用' : `${uses[m][0]}备用`, S.opt)).join('');
+  };
   const seg = [['zh', '中文'], ['ja', '日语'], ['mix', '中文 + 日语']].map(([id, l]) => `<button type="button" class="${S.lang === id ? 'on' : ''}" aria-pressed="${S.lang === id}" data-lang="${id}">${l}</button>`).join('');
   const fmts = ['SRT', 'ASS', 'VTT', 'TXT'].map((f) => `<label class="check mono" style="font-size:13px"><input type="checkbox" data-fmt="${f}" ${S.formats.includes(f) ? 'checked' : ''}><span>${f}</span></label>`).join('');
   const queue = S.files.map((f, i) => `<div class="q-row"><span class="mono cap ix">${String(i + 1).padStart(2, '0')}</span><span class="q-name">${esc(f.name)}</span><span class="mono dim sz" style="font-size:12px;text-align:right">${hms(f.duration)}</span><span class="mono faint" style="font-size:12px;text-align:right">${bytes(f.size)}</span><button class="x" type="button" aria-label="从队列移除" data-rm="${i}">${X}</button></div>`).join('');
@@ -87,9 +99,9 @@ function renderNew() {
     <div class="st"><span class="n mono">01</span><span class="t">提取音频</span><span class="dim" style="font-size:13px">FFmpeg</span></div>
     <div class="st"><span class="n mono">02</span><span class="t">断句对时</span><span class="dim" style="font-size:13px">${'按句子切分，逐字对时'}</span></div>
     <div class="st"><span class="n mono">03</span><span class="t">识别</span>
-      ${model('Qwen3-ASR 1.7B', '主识别', true)}${model('MiMo-V2.5-ASR', '中文备用', S.opt && zh)}${model('parakeet-ctc-1.1b-ja', '日语备用', S.opt && ja)}${model('MOSS', '说话人', S.dia)}
+      ${model('Qwen3-ASR 1.7B', '主识别', true)}${backupRows()}${model('MOSS', '说话人', S.dia)}
     </div>
-    <div class="st ${S.opt ? '' : 'off'}"><span class="n mono">04</span><span class="t">校对</span><span class="dim" style="font-size:13px">DeepSeek</span><span class="faint" style="font-size:13px">${S.opt ? '对照两份结果' : '不运行'}</span></div>
+    <div class="st ${S.opt ? '' : 'off'}"><span class="n mono">04</span><span class="t">校对</span><span class="dim" style="font-size:13px">DeepSeek</span><span class="faint" style="font-size:13px">${S.opt ? '大纲 → Qwen 复核 → 逐句校对' : '不运行'}</span></div>
     <div class="st"><span class="n mono">05</span><span class="t">生成字幕</span><span class="dim mono" style="font-size:13px">${S.formats.join(' ') || '未选择格式'}</span></div>
   </section>`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
@@ -125,7 +137,9 @@ function renderProgress() {
   const s = S.status || {};
   const c = s.current;
   if (!c) {
-    view.innerHTML = `<div class="empty"><p>${s.error ? esc(s.error) : '当前没有任务'}</p><a class="btn" href="#new">新建转写</a></div>`;
+    // 刚做完一个任务时，给一个去校对的入口
+    const done = !s.error && s.finished;
+    view.innerHTML = `<div class="empty"><p>${s.error ? esc(s.error) : done ? '转写完成' : '当前没有任务'}</p><div style="display:flex;gap:12px">${done ? '<a class="btn solid" href="#review">去校对</a>' : ''}<a class="btn" href="#new">新建转写</a></div></div>`;
     return;
   }
   const elapsed = c.elapsed || 0;
@@ -203,7 +217,7 @@ async function renderReview() {
   const options = jobs.map((x) => `<option value="${x.id}" ${x.id === j.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
   view.innerHTML = `
   <main class="e-grid">
-    <section class="e-left" aria-label="预览与对照">
+    <section class="e-left${isVideo ? '' : ' audio'}" aria-label="预览与对照">
       <div class="video">
         ${isVideo ? `<video id="media" src="${base}/source" preload="metadata"></video>` : `<audio id="media" src="${base}/audio" preload="metadata"></audio><span class="ph mono">音频预览</span>`}
         <p class="sub" id="sub"></p>
