@@ -82,4 +82,13 @@ assert parts[0][0] == 36.0 and abs(parts[-1][1] - 48.0) < 1e-9 and parts[0][1] =
 from core import speakers
 turns = [("S01", "問題ない？"), ("S01", "うん？")] + [("S01", "2月1日")] * 30 + [("S02", "陣[S02]形を切って"), ("S01", "はい"), ("S01", "はい")]
 assert speakers.clean_turns(turns) == [("S01", "問題ない？"), ("S01", "うん？"), ("S01", "2月1日"), ("S02", "陣形を切って"), ("S01", "はい"), ("S01", "はい")]
+# 日语里只有 MiMo 听到的不插；有别的模型一起听到、或者是中文时照常插。
+ja = [dict(s, lang="ja") for s in segs]
+assert len(sentences.place_extras([dict(s) for s in ja], [{"a": 1.85, "b": 3.0, "lang": "ja", "field": "mimo", "text": "コルン、コルンの"}])) == 2
+assert len(sentences.place_extras([dict(s) for s in ja], [
+    {"a": 1.85, "b": 3.0, "lang": "ja", "field": "mimo", "text": "だめ"},
+    {"a": 1.9, "b": 2.8, "lang": "ja", "field": "whisper", "text": "だめ"},
+])) == 3
+assert len(sentences.place_extras([dict(s) for s in ja], [{"a": 1.85, "b": 3.0, "lang": "ja", "field": "whisper", "text": "だめ"}])) == 3
+assert len(sentences.place_extras([dict(s) for s in segs], [{"a": 1.85, "b": 3.0, "lang": "zh", "field": "mimo", "text": "中间多出来一句话"}])) == 3
 print("all passed")

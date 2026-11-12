@@ -37,6 +37,8 @@ MODELS = {
     },
     "mimo": {
         "label": "MiMo-V2.5-ASR", "short": "MiMo", "role": "backup", "langs": ("zh", "ja"),
+        # 这些语言里它单独听到、Qwen 没有的段落不插进字幕（日语字错率约 56%，单独听到的多半是乱字）
+        "weak": ("ja",),
         "files": {"mimo_model": _f(r"MiMo-V2.5-ASR\mimo-asr-q4_k.gguf", "cstr/mimo-asr-GGUF", 4517988832,
                                  "12dbc7cc7a20c7add6ff00bf8b12bca1c46304e0100a5c5a6e74bdecfc57a306"),
                   "mimo_codec": _f(r"MiMo-V2.5-ASR\mimo-tokenizer-q4_k.gguf", "cstr/mimo-tokenizer-GGUF", 395594656,

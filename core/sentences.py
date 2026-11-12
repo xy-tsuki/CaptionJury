@@ -492,6 +492,7 @@ def place_extras(segs, extras):
     """把 Qwen 没识别出、其他模型听到的段落插成存疑字幕，重新编号后返回全部句子。
 
     extras 是 {"a", "b", "lang", "field", "text"}；时间重叠的合成一条，每个模型的写法放在各自的字段里。
+    只有在这种语言上不可靠的模型（models 里的 weak，如日语的 MiMo）听到的段落不插。
     """
     if not extras:
         return segs
@@ -506,6 +507,8 @@ def place_extras(segs, extras):
             clusters.append({"a": e["a"], "b": e["b"], "lang": e["lang"], "texts": {e["field"]: [e["text"]]}})
     new = []
     for c in clusters:
+        if all(c["lang"] in models.MODELS.get(f, {}).get("weak", ()) for f in c["texts"]):
+            continue  # 只有在这种语言上不可靠的模型听到，多半是乱字
         prev = next((s for s in reversed(segs) if s["a"] <= c["a"]), None)
         nxt = next((s for s in segs if s["a"] > c["a"]), None)
         a = max(c["a"], prev.get("spoken_end", prev["b"]) if prev else 0.0)
