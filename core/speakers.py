@@ -1,6 +1,10 @@
 """Decides who said each character. MOSS tells speakers apart and Qwen supplies the words, so the two are joined by text, because MOSS's clock drifts."""
 import collections
 import difflib
+import itertools
+import re
+
+from . import sentences
 
 DETAIL = 30.0  # short windows keep quick replies, but MOSS restarts its numbering in each one
 WIDE = 300.0  # long windows lose some quick replies, but keep one numbering for minutes at a time
@@ -30,6 +34,19 @@ def slice_of(slices, chunks):
     """The stretch of audio a window covers, in the format CrispASR imports."""
     first, last = slices[chunks[0]][2], slices[chunks[-1]][2]
     return {"start": first["start"], "end": last["end"], "t0_cs": first["t0_cs"], "t1_cs": last["t1_cs"]}
+
+
+TAG = re.compile(r"\[S\d+\]")  # MOSS 有时把换人的标记写进文字里
+
+
+def clean_turns(turns, stuck=3):
+    """整理 MOSS 一个窗口的输出：删掉写进文字里的说话人标记；同一段话在一行里重复的只留一遍；
+    同一句连着出现 stuck 次以上（MOSS 卡住了）也只留一遍。连着两遍的"はい""はい"照常保留。"""
+    out = []
+    for _, group in itertools.groupby(((who, sentences.squash_repeats(TAG.sub("", text))) for who, text in turns), key=lambda x: x[1]):
+        group = list(group)
+        out += group[:1] if len(group) >= stuck else group
+    return out
 
 
 def turns_by_window(transcription):

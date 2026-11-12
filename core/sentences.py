@@ -26,6 +26,14 @@ FILLERS = set("嗯哎啊哦呃唉诶欸噢呀哈呵额唔哼喔嘿哟呦咦") | 
 FILLER_WORDS = {"えっと", "あの", "その", "まあ"}
 
 
+REPEAT = re.compile(r"(.{2,20}?)\1{3,}")  # 同一段（2 到 20 个字）连续出现 4 次以上
+
+
+def squash_repeats(text):
+    """模型偶尔会卡住，把同一段话重复几十上百遍（比如"2月1日2月1日…"），只留一遍。"""
+    return REPEAT.sub(r"\1", text)
+
+
 def is_filler(text):
     """A sentence made only of interjections, like 嗯 or 哎哎 or えっと."""
     core = "".join(c for c in text if c not in SKIP)
@@ -434,6 +442,19 @@ def attach_backup(chunk_segs, primary, backup, langs, field):
         if piece and s["lang"] in langs:
             s[field] = piece
     return _found(chunk_segs, cuts, backup)
+
+
+def spread(text, t0, t1):
+    """没有逐字时间的一段文字：按句末标点拆开，t0 到 t1 的时间按字数分给各句。返回 [(起, 止, 句子)]。"""
+    pieces = [p.strip() for p in re.findall(r"[^%s]+[%s%s]*" % (ENDS, ENDS, CLOSERS), text)]
+    pieces = [p for p in pieces if worth_showing(p)]
+    total = sum(_spoken(p) for p in pieces) or 1
+    out, t = [], t0
+    for p in pieces:
+        dt = (t1 - t0) * _spoken(p) / total
+        out.append((t, t + dt, p))
+        t += dt
+    return out
 
 
 EXTRA_GAP = 0.5  # 前后两句之间的空隙比这短，多出来的文字多半是对齐误差，不单独展示

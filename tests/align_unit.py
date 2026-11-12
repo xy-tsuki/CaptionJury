@@ -42,4 +42,16 @@ assert 29.0 < segs[0]["a"] < segs[0]["b"] <= segs[1]["a"], [(s["a"], s["b"]) for
 # 只有一大串字堆在一处才提醒用户；三五个字堆在一起只是语速快。
 assert not sentences.lost_alignment(words)
 assert sentences.lost_alignment([w("字", 0, 0)] * 12 + [w("们", 3000, 3020)])
+
+# 模型卡住重复的一段只留一遍；正常的重复（两三遍、单字叠词）不动。
+assert sentences.squash_repeats("うん？2月1日" + "2月1日" * 80 + "2月") == "うん？2月1日2月"
+assert sentences.squash_repeats("哪一个？哪一个？") == "哪一个？哪一个？"
+assert sentences.squash_repeats("这个腿放着，放放放着。") == "这个腿放着，放放放着。"
+assert sentences.squash_repeats("对对对对对") == "对对对对对"
+
+# MOSS 的输出上限按最长的窗口算。
+from core import pipeline
+assert pipeline._moss_tokens([{"t0_cs": 0, "t1_cs": 3640}]) == 582
+assert pipeline._moss_tokens([{"t0_cs": 0, "t1_cs": 1000}]) == 512
+assert pipeline._moss_tokens([{"t0_cs": 0, "t1_cs": 27995}]) == 4096
 print("all passed")

@@ -124,7 +124,7 @@ def args(cfg, name):
     if name == "parakeet":
         return ["--backend", "fastconformer-ctc", "-m", cfg["parakeet_model"]]
     if name == "moss":
-        return ["--backend", "moss-diarize", "-m", cfg["moss_model"], "-n", "4096"]
+        return ["--backend", "moss-diarize", "-m", cfg["moss_model"]]  # -n（最多输出多少 token）按窗口长度在流水线里给
     raise KeyError(name)
 
 

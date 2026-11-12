@@ -32,6 +32,15 @@ def _norm(t):
     return PUNCT.sub("", t)
 
 
+MOSS_TOKENS_PER_SEC = 16  # MOSS 每秒音频最多输出这么多 token（含说话人标记），正常说话远用不到
+
+
+def _moss_tokens(raw):
+    """MOSS 这次运行的输出上限：按最长的窗口算，至少 512，最多 4096。"""
+    longest = max((s["t1_cs"] - s["t0_cs"]) / 100 for s in raw)
+    return int(min(4096, max(512, longest * MOSS_TOKENS_PER_SEC)))
+
+
 def _hint(terms):
     """The context Qwen gets. A bare list of words is sometimes read back as the transcript; a sentence is not."""
     return f"这段录音里可能出现这些词：{'、'.join(terms)}。" if terms else ""
@@ -332,24 +341,33 @@ class Queue:
         t.finish("vad")
         return out
 
-    def _transcribe(self, cfg, key, d, raw, args):
-        """Runs one model over these stretches of audio, moving its bar by seconds of audio; returns its transcription."""
+    def _transcribe(self, cfg, key, d, raw, args, name=None, before=0.0, overall=None):
+        """Runs one model over these stretches of audio, moving its bar by seconds of audio; returns its transcription.
+
+        一个模型分几次跑时：name 区分各次的文件名，before 是前几次已经跑过的音频秒数，overall 是几次合计的秒数，进度条按合计走。
+        """
+        name = name or key
         doc = json.loads(json.dumps(self.seg_doc))
         doc["crispasr_vad"]["slices"] = raw
         doc["crispasr_vad"]["num_slices"] = len(raw)
-        seg_file = d / f"seg_{key}.json"
+        seg_file = d / f"seg_{name}.json"
         seg_file.write_text(json.dumps(doc), encoding="utf-8")
         t = self.tracker
-        t.set(key, 1, "加载中")
-        t.creep(key, LOAD_SHARE, progress.STARTUP[key], "加载中")
-        on_gpu = [False]
-        # The bar follows seconds of audio, so a long chunk moves it further than a short one.
         lengths = [(s["t1_cs"] - s["t0_cs"]) / 100 for s in raw]
-        total = sum(lengths) or 1
-        rate = t.rates[key]
+        total = overall or sum(lengths) or 1
 
         def at(n):
-            return LOAD_SHARE + (99 - LOAD_SHARE) * sum(lengths[:n]) / total
+            return LOAD_SHARE + (99 - LOAD_SHARE) * (before + sum(lengths[:n])) / total
+
+        if before:
+            t.set(key, at(0))
+            t.creep(key, at(1), progress.STARTUP[key] + lengths[0] * t.rates[key])
+        else:
+            t.set(key, 1, "加载中")
+            t.creep(key, LOAD_SHARE, progress.STARTUP[key], "加载中")
+        on_gpu = [False]
+        # 进度条按音频秒数走，长的块走得多
+        rate = t.rates[key]
 
         def line(s):
             on_gpu[0] = on_gpu[0] or bool(ON_GPU.search(s))
@@ -360,27 +378,36 @@ class Queue:
                 if n < len(lengths):
                     t.creep(key, at(n + 1), lengths[n] * rate)
 
-        cmd = self._base(cfg) + self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{key}"] + args
+        cmd = self._base(cfg) + self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
         self._spawn(cmd, d, line)
         if not on_gpu[0]:
             self.state["current"].setdefault("warnings", []).append(f"{NAMES[key]} 没有用上 GPU")
-        return json.loads((d / f"out_{key}.json").read_text(encoding="utf-8"))["transcription"]
+        return json.loads((d / f"out_{name}.json").read_text(encoding="utf-8"))["transcription"]
 
     def _moss(self, cfg, d, slices, lang, job):
-        """One MOSS run over short and long windows; returns their turns, or None so a failure only costs the labels."""
+        """MOSS 分两次跑短窗口和长窗口，返回各窗口的说话人和文字；失败返回 None，只是字幕不带说话人。"""
         detail = speakers.windows(slices, speakers.DETAIL)
         wide = speakers.windows(slices, speakers.WIDE, speakers.OVERLAP)
-        raw = [speakers.slice_of(slices, g) for g in detail + wide]
-        self.tracker.set_audio("moss", sum(s["t1_cs"] - s["t0_cs"] for s in raw) / 100)
+        runs = [[speakers.slice_of(slices, g) for g in ws] for ws in (detail, wide)]
+        secs = [sum(s["t1_cs"] - s["t0_cs"] for s in r) / 100 for r in runs]
+        self.tracker.set_audio("moss", sum(secs))
         try:
-            by_window = speakers.turns_by_window(self._transcribe(cfg, "moss", d, raw, ["-l", lang]))
+            # 短窗口和长窗口分两次跑，各按最长的窗口给输出上限：MOSS 偶尔会卡住重复同一句，
+            # 上限给得太宽，一个 30 秒的窗口就要白跑好几分钟（2026-11-11 出现过 5 分钟）
+            by_window = {}
+            for k, (r, tag) in enumerate(zip(runs, ("moss", "moss_wide"))):
+                if not r:
+                    continue
+                res = self._transcribe(cfg, "moss", d, r, ["-l", lang, "-n", str(_moss_tokens(r))], tag, sum(secs[:k]), sum(secs))
+                for w, turns in speakers.turns_by_window(res).items():
+                    by_window[w + (len(detail) if k else 0)] = speakers.clean_turns(turns)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             job["warnings"].append("说话人区分失败，字幕不带说话人：" + str(e)[:200])
             self.tracker.finish("moss", "失败", learn=False)
             return None
         self.tracker.finish("moss")
         n = len(detail)
-        return [(g, by_window[k]) for k, g in enumerate(detail)], [(g, by_window[n + k]) for k, g in enumerate(wide)]
+        return [(g, by_window.get(k, [])) for k, g in enumerate(detail)], [(g, by_window.get(n + k, [])) for k, g in enumerate(wide)]
 
     def _asr(self, cfg, key, d, slices, lang, only=None, context=""):
         """Runs one model over these chunks; returns text and timed characters, keyed by chunk index."""
@@ -397,7 +424,9 @@ class Queue:
                 continue  # on near-silent audio Qwen reads the hint back instead of transcribing
             a, b = r["offsets"]["from"] / 1000, r["offsets"]["to"] / 1000
             best = max(idx, key=lambda i: min(b, slices[i][1]) - max(a, slices[i][0]))
-            texts[best] = texts.get(best, "") + r["text"]
+            # Qwen 的文字要和逐字时间一一对上，不能改；其他模型卡住重复的部分只留一遍
+            text = r["text"] if key in ("qwen", "qwen2") else sentences.squash_repeats(r["text"])
+            texts[best] = texts.get(best, "") + text
             words.setdefault(best, []).extend(r.get("words", []))
         cur = self.state["current"]
         cur["stream_name"] = NAMES[key]
@@ -479,8 +508,9 @@ class Queue:
             text = "".join(text for _, text in turns)
             if group:
                 self._keep_extras(segs, sentences.attach(group, text, "moss"), "moss")
-            elif sentences.worth_showing(text):  # 整块都没有 Qwen 的句子
-                self.extras.append({"a": t0, "b": t1, "lang": "ja" if sentences.KANA.search(text) else "zh", "field": "moss", "text": text.strip()})
+            elif sentences.worth_showing(text):  # 整块都没有 Qwen 的句子：按句拆开，时间按字数分
+                for a, b, piece in sentences.spread(text.strip(), t0, t1):
+                    self.extras.append({"a": a, "b": b, "lang": "ja" if sentences.KANA.search(piece) else "zh", "field": "moss", "text": piece})
 
     def _keep_extras(self, segs, found, field):
         """记下对不上 Qwen 任何句子的文字（Qwen 没识别出的部分），给它们估好时间。"""

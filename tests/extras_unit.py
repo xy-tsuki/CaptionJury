@@ -72,4 +72,14 @@ assert [s["text"] for s in out] == ["今天天气很好。", "第一段", "第�
 # 没有空隙的不插。
 assert len(sentences.place_extras([dict(s) for s in tight], [{"a": 1.9, "b": 2.1, "lang": "zh", "field": "moss", "text": "多出"}])) == 2
 assert sentences.place_extras(segs, []) is segs
+
+# 整块都没有 Qwen 的句子时，MOSS 的文字按句拆开，时间按字数分，不出一条三十多秒的字幕。
+parts = sentences.spread("大丈夫？その手続ちょっと急いでんだけど。うん。", 36.0, 48.0)
+assert [p for _, _, p in parts] == ["大丈夫？", "その手続ちょっと急いでんだけど。"], parts  # "うん。"是语气词
+assert parts[0][0] == 36.0 and abs(parts[-1][1] - 48.0) < 1e-9 and parts[0][1] == parts[1][0]
+
+# MOSS 卡住时的输出：说话人标记、一行里的重复、连着很多行的同一句都只留一遍；连着两遍的照常保留。
+from core import speakers
+turns = [("S01", "問題ない？"), ("S01", "うん？")] + [("S01", "2月1日")] * 30 + [("S02", "陣[S02]形を切って"), ("S01", "はい"), ("S01", "はい")]
+assert speakers.clean_turns(turns) == [("S01", "問題ない？"), ("S01", "うん？"), ("S01", "2月1日"), ("S02", "陣形を切って"), ("S01", "はい"), ("S01", "はい")]
 print("all passed")
