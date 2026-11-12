@@ -13,7 +13,9 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 - **AI accuracy mode** (optional): the AI writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and the AI then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
 - **Speaker labels** (optional): MOSS-Transcribe-Diarize tells speakers apart and labels each subtitle.
 - **Nothing Qwen missed is dropped**: passages that other models heard but Qwen did not are listed as uncertain subtitles, which you can delete if they are wrong.
-- **Review page**: compare each model's version line by line and adopt one with a click; edit text, nudge in and out points, play a single line, delete (with undo), find and replace, then export. An overview strip above the waveform marks where corrected and uncertain lines are in the whole recording.
+- **Three modes**: Fast (main model only), Accurate (multi-model comparison + AI proofreading, the default) and Custom (choose yourself). The New page estimates how long each takes from past runs and shows which steps will run.
+- **Subtitles ready for editing**: pick the line length for your video (landscape ≤18 characters, portrait ≤12, or unlimited); long sentences are split at punctuation, pauses and likely word boundaries using per-character timing. Punctuation can be removed. The SRT imports directly into CapCut (剪映), Premiere, DaVinci Resolve and Final Cut.
+- **Review page**: lines are listed exactly as they will be exported; compare each model's version line by line and adopt one with a click; edit text, drag the edges of a block on the timeline or type a timecode to change in and out points, play a single line, delete (with undo), find and replace, then export. An overview strip above the waveform marks where corrected and uncertain lines are in the whole recording.
 - **History**: every past result is kept; reopen it for review or export it again in another format.
 
 ## Requirements
@@ -31,9 +33,9 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 ## Usage
 
-1. **New** (新建): drop or pick files, choose the language (Chinese / Japanese / Chinese + Japanese), tick multi-model comparison (多模型对照), AI accuracy mode (AI 精度优化) and speaker labels if wanted, choose subtitle formats, and start. Subtitles are written next to the source file.
+1. **New** (新建): drop or pick files, choose the language (Chinese / Japanese / Chinese + Japanese), choose a mode (Fast 快速 / Accurate 精准 / Custom 自定义; in Custom, tick multi-model comparison 多模型对照 and AI accuracy mode AI 精度优化 yourself), tick speaker labels if wanted, choose subtitle formats, and start. Subtitles are written next to the source file.
 2. **Progress** (进度): one bar per model with an estimate of the time left; you can pause or cancel.
-3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. An uncertain line becomes "confirmed" once you edit it or click "mark as confirmed" (标为已确认). Click "Export subtitles" (导出字幕) and pick the formats when done.
+3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. An uncertain line becomes "confirmed" once you edit it or click "mark as confirmed" (标为已确认). Choose the line length at the top (changing it re-splits the list), then click "Export subtitles" (导出字幕) and pick the formats; the export menu says where to import the file in each editor.
 4. **History** (历史): past results, which you can reopen for review, export, show in Explorer, or delete (only the saved result is deleted; the source file and exported subtitles stay).
 
 For AI accuracy mode, pick one of two ways in Settings → Proofreading AI (设置 → 校对 AI):
