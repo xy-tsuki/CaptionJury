@@ -37,6 +37,21 @@ const bytes = (n) => (n > 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.
 const langAttr = (l) => (l === 'ja' ? 'ja' : 'zh-CN');
 const when = (t) => { const d = new Date(t * 1000); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const fileName = (p) => String(p).split(/[\\/]/).pop();
+const agentMode = () => S.cfg && S.cfg.proof_mode === 'agent';
+/* 当前校对用的服务商名称（走 Agent 时是"你的 Agent"） */
+function proofName() {
+  if (!S.cfg) return '校对 AI';
+  if (agentMode()) return '你的 Agent';
+  const p = (S.cfg.providers || []).find((x) => x.key === S.cfg.proof_provider);
+  return p ? p.label.replace(/（.*）$/, '') : '校对 AI';
+}
+
+/* 复制到剪贴板；WebView 不给用剪贴板接口时退回到选中再复制 */
+async function copyText(text, area) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 退回下面的办法 */ }
+  if (area) { area.focus(); area.select(); }
+  try { return document.execCommand('copy'); } catch (e) { return false; }
+}
 
 let toastT;
 /* action 可选：{ label, fn }，在提示里放一个按钮（比如撤销） */
@@ -144,8 +159,8 @@ function renderNew() {
               <p>${compareText}。校对页逐句列出各模型的写法，可以一键采用。</p>
               ${S.compare && !anyBackup ? '<span class="warn">没有可用的备用模型，到设置里下载并勾选。</span>' : ''}</label>
             <label class="opt check"><input type="checkbox" id="opt" ${S.opt ? 'checked' : ''}><b>AI 精度优化</b>
-              <p>DeepSeek 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后 DeepSeek 对照各份结果逐句校对。只发送文字。</p>
-              ${S.opt && S.cfg && !S.cfg.has_key ? '<span class="warn">还没有保存 DeepSeek 密钥，到设置里填写。</span>' : ''}</label>
+              <p>${esc(proofName())} 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后对照各份结果逐句校对。只发送文字。${agentMode() ? '跑到这一步时会暂停，在进度页复制提示词给 Agent，再把回复粘贴回来。' : ''}</p>
+              ${S.opt && S.cfg && !agentMode() && !S.cfg.has_key ? `<span class="warn">还没有保存 ${esc(proofName())} 的密钥，到设置里填写，或者改用复制给 Agent 的方式。</span>` : ''}</label>
             <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
               <p>先用 MOSS 分出说话人，再标到每条字幕上。</p></label>
           </div>
@@ -163,7 +178,7 @@ function renderNew() {
     <div class="fs"><span class="t">提取音频</span><span class="d">FFmpeg 转成 16 kHz 单声道</span></div>
     <div class="fs wide"><span class="t">识别</span>${md('Qwen3-ASR 主识别，逐字对时、断句', true)}${md('MOSS 区分说话人', S.dia)}</div>
     <div class="fs${S.compare ? '' : ' off'}"><span class="t">多模型对照</span>${Object.keys(uses).length ? Object.entries(uses).map(([m, ls]) => md(`${m}（${ls.join('、')}）`, S.compare)).join('') : '<span class="d">没有可用的备用模型</span>'}</div>
-    <div class="fs wide${S.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${S.opt ? '大纲 → Qwen 复核 → DeepSeek 逐句校对' : '不运行'}</span></div>
+    <div class="fs wide${S.opt ? '' : ' off'}"><span class="t">AI 精度优化</span><span class="d">${S.opt ? `${esc(proofName())}：大纲 → Qwen 复核 → 逐句校对` : '不运行'}</span></div>
     <div class="fs"><span class="t">生成字幕</span><span class="d mono">${S.formats.join(' ') || '未选择格式'}</span></div>
   </section>`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { S.lang = b.dataset.lang; renderNew(); }; });
@@ -196,6 +211,8 @@ async function start() {
 }
 
 /* ---------- 进度 ---------- */
+const STEPS = { outline: ['第 1 步，共 2 步：写大纲', '它会读完全文，写出场景大纲和专有名词。'], proof: ['第 2 步，共 2 步：逐句校对', '它会对照几份识别结果，逐句改错和调整断句。'] };
+
 function renderProgress() {
   const s = S.status || {};
   const c = s.current;
@@ -208,30 +225,51 @@ function renderProgress() {
     </div>`;
     return;
   }
-  const elapsed = c.elapsed || 0;
-  const remain = c.remaining ?? null;
-  const N = 64;
-  const lanes = c.lanes.map((l) => {
-    const done = Math.floor(l.pct / 100 * N);
-    let cells = '';
-    for (let i = 0; i < N; i++) cells += `<span class="cell${i < done ? ' done' : (i === done && l.pct > 0 && l.pct < 100 && !s.paused ? ' now' : '')}"></span>`;
-    return `<div class="lane${l.pct === 0 ? ' wait' : l.pct >= 100 ? ' fin' : ''}"><span>${esc(l.name)}</span><div class="cells" aria-hidden="true">${cells}</div><span class="s">${esc(l.state)}</span></div>`;
-  }).join('');
+  const box = $('#agentbox');
+  if (c.agent && box && box.dataset.k === c.agent.k) {  // 正在等粘贴：只刷新左栏和进度条，不动用户正在粘贴的内容
+    $('.p-left').innerHTML = progressLeft(s, c);
+    $('.lanes').innerHTML = progressLanes(s, c);
+    bindProgress(s);
+    return;
+  }
   const stream = (c.stream || []).map((r) => `<div class="ln2"><span class="tc mono">${hms(r.t, true)}</span><span>${esc(r.text)}</span></div>`).join('');
-  const finished = !s.running;
-  const on = (x) => (x ? '开启' : '关闭');
   view.innerHTML = `
   <main class="p-grid">
-    <section class="p-left" aria-label="总进度">
-      <div><p class="where">${finished ? '已结束' : s.paused ? '已暂停' : `正在转写第 ${(s.index || 0) + 1} 个，共 ${s.total || 1} 个`}</p><h1>${esc(c.name)}</h1></div>
+    <section class="p-left" aria-label="总进度">${progressLeft(s, c)}</section>
+    <section class="p-right" aria-label="各模型进度">
+      <div class="lanes">${progressLanes(s, c)}</div>
+      ${c.agent ? `<div class="agent" id="agentbox" data-k="${c.agent.k}" data-step="${c.agent.step}">
+        <h3>${STEPS[c.agent.step][0]}</h3>
+        <p class="dim">把提示词复制给你的 Agent（Claude、ChatGPT、Gemini 等），${STEPS[c.agent.step][1]}等它回复完，把回复整段粘贴到下面，前后多出来的文字没关系。</p>
+        <div class="ag-bar"><button class="btn solid" type="button" id="agcopy">复制提示词</button><span class="faint small" id="agsize">正在准备提示词…</span></div>
+        <textarea class="field mono ag-prompt" id="agprompt" readonly rows="5" aria-label="提示词"></textarea>
+        <label class="lab"><span>Agent 的回复</span><textarea class="field ag-in" id="agentin" rows="7" placeholder="把 Agent 的回复粘贴到这里"></textarea></label>
+        <p class="err" id="agerr" hidden></p>
+        <div class="ag-bar"><button class="btn solid" type="button" id="agsend">提交结果</button><button class="btn ghost" type="button" id="agskip">${c.agent.step === 'outline' ? '跳过大纲，直接校对' : '跳过校对，保留识别结果'}</button></div>
+      </div>` : `<div class="stream" aria-label="最新识别结果">
+        ${stream ? `<h3>${esc(c.stream_name)} 最新几条</h3>${stream}` : '<p class="faint small">识别出的文字会在这里滚动显示。</p>'}
+      </div>`}
+    </section>
+  </main>`;
+  bindProgress(s);
+  if (c.agent) bindAgent(c.agent);
+}
+
+function progressLeft(s, c) {
+  const elapsed = c.elapsed || 0;
+  const remain = c.remaining ?? null;
+  const finished = !s.running;
+  const on = (x) => (x ? '开启' : '关闭');
+  return `
+      <div><p class="where">${finished ? '已结束' : c.agent ? '等你粘贴 Agent 的结果' : s.paused ? '已暂停' : `正在转写第 ${(s.index || 0) + 1} 个，共 ${s.total || 1} 个`}</p><h1>${esc(c.name)}</h1></div>
       <div><div class="big">${Math.floor(c.pct)}<small>%</small></div></div>
       <div class="bar" aria-hidden="true"><i style="width:${Math.min(100, c.pct)}%"></i></div>
       <dl class="kv">
-        ${finished ? '' : `<dt>已用时</dt><dd class="mono">${hms(elapsed)}</dd><dt>预计剩余</dt><dd class="mono">${remain === null ? '估算中' : hms(remain)}</dd>${s.total > 1 ? `<dt>整个队列</dt><dd class="mono">${Math.floor(s.queue_pct || 0)}%</dd>` : ''}`}
+        ${finished ? '' : `<dt>已用时</dt><dd class="mono">${hms(elapsed)}</dd><dt>预计剩余</dt><dd class="mono">${c.agent ? '等你粘贴' : remain === null ? '估算中' : hms(remain)}</dd>${s.total > 1 ? `<dt>整个队列</dt><dd class="mono">${Math.floor(s.queue_pct || 0)}%</dd>` : ''}`}
         <dt>时长</dt><dd class="mono">${c.duration ? hms(c.duration) : '-'}</dd>
         <dt>语言</dt><dd>${LANGS[c.lang] || '-'}</dd>
         <dt>多模型对照</dt><dd>${on(c.compare)}</dd>
-        <dt>AI 精度优化</dt><dd>${on(c.opt)}</dd>
+        <dt>AI 精度优化</dt><dd>${c.opt ? esc(proofName()) : '关闭'}</dd>
         <dt>区分说话人</dt><dd>${on(c.diarize)}</dd>
         ${s.vram ? `<dt>显存</dt><dd class="mono">${s.vram}</dd>` : ''}
       </dl>
@@ -241,19 +279,45 @@ function renderProgress() {
         ${finished
     ? (s.finished ? '<a class="btn solid" href="#review">进入校对</a>' : '<a class="btn" href="#new">返回新建</a>')
     : `<button class="btn" type="button" id="pause">${s.paused ? '继续' : '暂停'}</button><button class="btn ghost" type="button" id="cancel">取消</button>`}
-      </div>
-    </section>
-    <section class="p-right" aria-label="各模型进度">
-      <div class="lanes">${lanes}</div>
-      <div class="stream" aria-label="最新识别结果">
-        ${stream ? `<h3>${esc(c.stream_name)} 最新几条</h3>${stream}` : '<p class="faint small">识别出的文字会在这里滚动显示。</p>'}
-      </div>
-    </section>
-  </main>`;
+      </div>`;
+}
+
+function progressLanes(s, c) {
+  const N = 64;
+  return c.lanes.map((l) => {
+    const done = Math.floor(l.pct / 100 * N);
+    let cells = '';
+    for (let i = 0; i < N; i++) cells += `<span class="cell${i < done ? ' done' : (i === done && l.pct > 0 && l.pct < 100 && !s.paused && !c.agent ? ' now' : '')}"></span>`;
+    return `<div class="lane${l.pct === 0 ? ' wait' : l.pct >= 100 ? ' fin' : ''}"><span>${esc(l.name)}</span><div class="cells" aria-hidden="true">${cells}</div><span class="s">${esc(l.state)}</span></div>`;
+  }).join('');
+}
+
+function bindProgress(s) {
   const p = $('#pause');
   if (p) p.onclick = async () => { await api().pause(!s.paused); };
   const x = $('#cancel');
   if (x) x.onclick = async () => { await api().cancel(); };
+}
+
+async function bindAgent(a) {
+  const r = await api().agent_prompt();
+  const area = $('#agprompt');
+  if (!r || !area || r.k !== a.k) return;
+  area.value = r.prompt;
+  $('#agsize').textContent = `约 ${r.prompt.length.toLocaleString()} 字。太长发不出去时，可以分两次发，或者换支持长文本的 Agent。`;
+  $('#agcopy').onclick = async () => { toast(await copyText(r.prompt, area) ? '已复制提示词' : '复制失败，请在框里全选后手动复制'); };
+  const err = $('#agerr');
+  $('#agsend').onclick = async (e) => {
+    const text = $('#agentin').value.trim();
+    if (!text) { err.hidden = false; err.textContent = '先把 Agent 的回复粘贴进来'; return; }
+    e.target.classList.add('busy');
+    const res = await api().agent_submit(a.step, text);
+    e.target.classList.remove('busy');
+    if (res.error) { err.hidden = false; err.textContent = '没能识别：' + res.error; return; }
+    err.hidden = true;
+    toast(a.step === 'outline' ? '已收到大纲，Qwen 接着复听' : '已收到校对结果');
+  };
+  $('#agskip').onclick = async () => { await api().agent_skip(); };
 }
 
 /* ---------- 校对 ---------- */
@@ -628,28 +692,35 @@ async function renderSettings() {
   const group = (role) => ms.filter((m) => m.role === role).map(card).join('');
   view.innerHTML = `
   <main class="s-grid">
-    <nav class="s-nav" aria-label="设置分类"><a href="#settings" data-j="api">DeepSeek</a><a href="#settings" data-j="models">本地模型</a><a href="#settings" data-j="runtime">运行环境</a><a href="#settings" data-j="terms">校对术语</a></nav>
+    <nav class="s-nav" aria-label="设置分类"><a href="#settings" data-j="api">校对 AI</a><a href="#settings" data-j="models">本地模型</a><a href="#settings" data-j="runtime">运行环境</a><a href="#settings" data-j="terms">校对术语</a></nav>
     <div class="s-main" id="smain">
       <section class="sec" id="api">
-        <div><h2>DeepSeek</h2><p class="desc">开启 AI 精度优化时用来写大纲和逐句校对。只发送识别出的文字，音视频不会上传。</p></div>
+        <div><h2>校对 AI</h2><p class="desc">开启 AI 精度优化时用来写大纲和逐句校对。只发送识别出的文字，音视频不会上传。</p></div>
         <div class="stack">
+          <div class="lab"><span>校对方式</span><div class="seg" role="group" aria-label="校对方式">
+            <button type="button" class="${agentMode() ? '' : 'on'}" data-pm="api">服务商接口（API 密钥）</button><button type="button" class="${agentMode() ? 'on' : ''}" data-pm="agent">复制给 Agent（订阅制）</button>
+          </div></div>
+          ${agentMode() ? `<p class="desc">适合已经订阅了 Claude、ChatGPT、Gemini 等、但没有 API 密钥的情况。跑到 AI 精度优化时转写会暂停，进度页给出提示词：复制给 Agent，等它回复完，把回复整段粘贴回来，程序会自动识别。每个文件要复制粘贴两次（先写大纲，再逐句校对），也可以跳过其中一步。</p>` : `
+          <div class="two">
+            <label class="lab"><span>服务商</span><select class="field" id="prov">${c.providers.map((p) => `<option value="${p.key}" ${p.key === c.proof_provider ? 'selected' : ''}>${esc(p.label)}${p.has_key ? '（已保存密钥）' : ''}</option>`).join('')}</select></label>
+            <label class="lab"><span>接口地址（OpenAI 兼容格式）</span><input class="field mono" data-cfg="proof_url" value="${esc(c.proof_url)}" placeholder="https://…/v1"></label>
+          </div>
           <div class="lab"><span>API 密钥</span>
             <div class="key">
               <input class="field mono" id="key" type="password" autocomplete="off" style="flex:1;min-width:220px" placeholder="${c.has_key ? '已保存，粘贴新密钥可替换' : '粘贴 API 密钥'}" aria-label="API 密钥">
               <button class="btn" type="button" id="ksave">保存</button>
-              <button class="btn" type="button" id="ktest" ${c.has_key ? '' : 'disabled'}>测试连接</button>
               ${c.has_key ? '<button class="btn ghost danger" type="button" id="kdel">删除</button>' : ''}
             </div>
           </div>
-          <p class="lock">${I.lock}<span id="kstat">${c.has_key ? '密钥已用 Windows DPAPI 加密保存，只有当前 Windows 账户能解开。' : '保存后用 Windows DPAPI 加密，只有当前 Windows 账户能解开。'}</span></p>
-          <div class="two">
-            <label class="lab"><span>接口地址</span><input class="field mono" data-cfg="deepseek_url" value="${esc(c.deepseek_url)}"></label>
-            <label class="lab"><span>模型</span><input class="field mono" data-cfg="deepseek_model" list="dsmodels" value="${esc(c.deepseek_model)}"><datalist id="dsmodels"></datalist></label>
-          </div>
+          <p class="lock">${I.lock}<span>${c.has_key ? '密钥已用 Windows DPAPI 加密保存，只有当前 Windows 账户能解开。每个服务商的密钥分开保存。' : '保存后用 Windows DPAPI 加密，只有当前 Windows 账户能解开。'}</span></p>
+          <div class="lab"><span>模型</span>
+            <div class="key"><select class="field mono" id="pmodel" style="flex:1;min-width:220px" ${c.has_key ? '' : 'disabled'}><option>${c.has_key ? '正在获取模型列表…' : '保存密钥后从接口获取'}</option></select><button class="btn" type="button" id="mrefresh" ${c.has_key ? '' : 'disabled'}>刷新列表</button></div>
+            <span class="faint small" id="mstat"></span>
+          </div>`}
         </div>
       </section>
       <section class="sec" id="models">
-        <div><h2>本地模型</h2><p class="desc">Qwen 是主识别模型。开启多模型对照时，勾选的备用模型各识别一遍，校对页逐句列出；同时开启 AI 精度优化，DeepSeek 会按多数一致来校对。备用模型越多越准，也越慢。改了路径后重新打开这一页检查。</p></div>
+        <div><h2>本地模型</h2><p class="desc">Qwen 是主识别模型。开启多模型对照时，勾选的备用模型各识别一遍，校对页逐句列出；同时开启 AI 精度优化，校对 AI 会按多数一致来校对。备用模型越多越准，也越慢。改了路径后重新打开这一页检查。</p></div>
         <div class="stack">
           <h3>必装</h3>${group('main')}
           <h3>区分说话人</h3>${group('diarize')}
@@ -669,7 +740,7 @@ async function renderSettings() {
         </div>
       </section>
       <section class="sec" id="terms">
-        <div><h2>校对术语</h2><p class="desc">人名、地名等固定写法，每行一条。Qwen 识别时作为提示，DeepSeek 校对时也会参考。</p></div>
+        <div><h2>校对术语</h2><p class="desc">人名、地名等固定写法，每行一条。Qwen 识别时作为提示，AI 校对时也会参考。</p></div>
         <label class="lab"><span>术语表</span><textarea class="field" data-cfg="glossary" rows="6" placeholder="例如：&#10;星月&#10;麦当劳">${esc(c.glossary)}</textarea></label>
       </section>
     </div>
@@ -688,6 +759,9 @@ async function renderSettings() {
   watchDownloads();
   $$('[data-bk]').forEach((i) => { i.onchange = async () => { await api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); S.cfg = await api().config(); }; });
   $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); showSys(b.dataset.back); renderSettings(); }; });
+  $$('[data-pm]').forEach((b) => { b.onclick = async () => { await api().save_config({ proof_mode: b.dataset.pm }); renderSettings(); }; });
+  if (agentMode()) return;
+  $('#prov').onchange = async (e) => { await api().set_provider(e.target.value); renderSettings(); };
   $('#ksave').onclick = async () => {
     const v = $('#key').value.trim();
     if (!v) return toast('请先粘贴密钥');
@@ -695,17 +769,34 @@ async function renderSettings() {
     toast('密钥已加密保存');
     renderSettings();
   };
-  $('#ktest').onclick = async (e) => {
-    e.target.classList.add('busy');
-    $('#kstat').textContent = '正在连接…';
-    const r = await api().test_key();
-    e.target.classList.remove('busy');
-    if (r.error) { $('#kstat').textContent = '连接失败：' + r.error; return; }
-    $('#kstat').textContent = '连接正常，可用模型：' + r.models.join('、');
-    $('#dsmodels').innerHTML = r.models.map((m) => `<option value="${esc(m)}"></option>`).join('');
-  };
   const del = $('#kdel');
   if (del) del.onclick = async () => { await api().delete_key(); toast('密钥已删除'); renderSettings(); };
+  if (c.has_key) loadModels(c);
+  $('#mrefresh').onclick = () => loadModels(c);
+}
+
+/* 从接口拉模型列表填进下拉框；拉不到时改成手动填写 */
+async function loadModels(c) {
+  const sel = $('#pmodel'), st = $('#mstat');
+  if (!sel) return;
+  st.textContent = '正在连接…';
+  const r = await api().list_models();
+  if (!$('#pmodel')) return;
+  if (r.error) {
+    st.textContent = '获取模型列表失败：' + r.error + '。可以检查密钥和接口地址后点刷新，或者直接手动填写模型名。';
+    const input = document.createElement('input');
+    input.className = 'field mono'; input.id = 'pmodel'; input.style.cssText = 'flex:1;min-width:220px';
+    input.value = c.proof_model; input.setAttribute('aria-label', '模型名');
+    input.onchange = async () => { await api().save_config({ proof_model: input.value.trim() }); toast('已保存'); };
+    sel.replaceWith(input);
+    return;
+  }
+  const list = r.models.includes(c.proof_model) || !c.proof_model ? r.models : [c.proof_model, ...r.models];
+  sel.innerHTML = list.map((m) => `<option value="${esc(m)}" ${m === c.proof_model ? 'selected' : ''}>${esc(m)}${r.models.includes(m) ? '' : '（当前设置，接口列表里没有）'}</option>`).join('');
+  sel.disabled = false;
+  st.textContent = `连接正常，共 ${r.models.length} 个模型。`;
+  if (!c.proof_model || !r.models.includes(c.proof_model)) st.textContent += '当前选的模型不在列表里，请重新选一个。';
+  sel.onchange = async () => { await api().save_config({ proof_model: sel.value }); c.proof_model = sel.value; S.cfg.proof_model = sel.value; toast('已保存'); };
 }
 
 /* ---------- 首次运行引导：选运行库，下载运行库和必装模型 ---------- */
@@ -835,7 +926,10 @@ async function poll() {
     if (s.dropped.length) addFiles(s.dropped);
     const badge = $('#navpct');  // 不在进度页时，导航上也能看到进度
     badge.hidden = !(s.running && s.current);
-    if (s.running && s.current) badge.textContent = Math.floor(s.current.pct) + '%';
+    if (s.running && s.current) badge.textContent = s.current.agent ? '待粘贴' : Math.floor(s.current.pct) + '%';
+    const waiting = s.current && s.current.agent ? s.current.agent.k : null;  // 不在进度页时提醒一次
+    if (waiting && waiting !== S.agentSeen && location.hash !== '#progress') toast('需要把提示词复制给 Agent', { label: '去进度页', fn: () => { location.hash = '#progress'; } });
+    S.agentSeen = waiting;
     if (location.hash === '#progress' && (s.running || wasRunning)) renderProgress();
     if (wasRunning && !s.running) {
       if (s.finished) S.job = null;

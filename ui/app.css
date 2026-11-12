@@ -192,6 +192,14 @@ mark:empty{display:none}
 .ln2{display:grid;grid-template-columns:104px minmax(0,1fr);gap:16px;padding:6px 0;align-items:baseline;border-bottom:1px solid var(--line)}
 .ln2 .tc{font-size:12px;color:var(--fg3)}
 
+/* 进度页：复制给 Agent */
+.agent{flex:1;min-height:0;overflow:auto;padding:16px 28px 24px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
+.agent h3{font-size:15px;font-weight:600}
+.agent>p{font-size:13px;line-height:1.7;max-width:760px}
+.ag-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ag-prompt{font-size:12px;color:var(--fg2);resize:vertical;line-height:1.6}
+.ag-in{font-size:13px;min-height:140px}
+
 /* 校对 */
 .e-grid{flex:1;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);min-height:0}
 .e-left{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;min-width:0}
