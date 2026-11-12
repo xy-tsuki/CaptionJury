@@ -276,7 +276,11 @@ class Queue:
         for s in job["segments"]:
             s.pop("times", None)
             s.pop("spoken_end", None)
+        store.save_job(job)  # 先存一份，导出出错也不丢结果
         job["written"] = subtitles.export(job, formats)
+        moved = [p for p in job["written"] if Path(p).parent != Path(job["source"]).parent]
+        if moved:
+            job["warnings"].append(f"源文件所在的文件夹没有写入权限，字幕存到了 {Path(moved[0]).parent}")
         store.save_job(job)
         store.save_config({"speed": self.tracker.rates})
         return job

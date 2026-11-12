@@ -88,7 +88,7 @@ function exportMenu(jid, small = true) {
     <summary class="btn ${small ? 'sm' : ''} solid">${I.down}导出字幕</summary>
     <div class="menu-pop">
       <div class="fmts">${FORMATS.map((x) => `<button type="button" class="fmt mono${f.includes(x) ? ' on' : ''}" data-xf="${x}" aria-pressed="${f.includes(x)}">${x}</button>`).join('')}</div>
-      <p>写在源文件所在的文件夹，再次导出会覆盖上次导出的文件。</p>
+      <p>写在源文件所在的文件夹（写不进去时存到"文档\听写字幕"），再次导出会覆盖上次导出的文件。</p>
       <button class="btn sm solid" type="button" data-xgo>导出</button>
     </div>
   </details>`;
@@ -112,7 +112,8 @@ function bindExport(root = document) {
       e.target.classList.remove('busy');
       if (out.error) return toast(out.error);
       m.open = false;
-      toast('已导出：' + out.map(fileName).join('、'));
+      const dir = out[0].replace(/[\\/][^\\/]*$/, '');
+      toast(`已导出到 ${dir}：` + out.map(fileName).join('、'), { label: '打开文件夹', fn: () => api().reveal(out[0]) });
     };
   });
 }

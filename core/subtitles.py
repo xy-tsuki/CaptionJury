@@ -1,4 +1,5 @@
 """Turns segments into timed cues and writes SRT, ASS, VTT and TXT."""
+import os
 import re
 from pathlib import Path
 
@@ -98,8 +99,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 WRITERS = {"SRT": (srt, ".srt"), "VTT": (vtt, ".vtt"), "ASS": (ass, ".ass"), "TXT": (txt, ".txt")}
 
 
+# 源文件所在的文件夹写不进去时（比如在 Program Files 里、文件夹被删了），改存到这里
+FALLBACK = Path(os.environ.get("USERPROFILE", Path.home())) / "Documents" / "听写字幕"
+
+
 def _free_path(path):
-    """Never overwrites a file this job did not write."""
+    """不覆盖不是这个任务写的文件。"""
     if not path.exists():
         return path
     n = 2
@@ -111,6 +116,7 @@ def _free_path(path):
 
 
 def export(job, formats):
+    """写出各格式的字幕，返回写好的路径。优先写在源文件旁边，写不进去就写到 FALLBACK。"""
     src = Path(job["source"])
     c = cues(job["segments"], job.get("speakers") if job.get("speaker_tags", True) else None)
     known = job.setdefault("exports", {})
@@ -118,8 +124,13 @@ def export(job, formats):
     for fmt in formats:
         fn, ext = WRITERS[fmt]
         path = Path(known[fmt]) if fmt in known else _free_path(src.with_suffix(ext))
-        # SRT and ASS get a BOM because many Windows players misread them without one.
-        path.write_text(fn(c), encoding="utf-8-sig" if fmt in ("SRT", "ASS") else "utf-8")
+        text, enc = fn(c), "utf-8-sig" if fmt in ("SRT", "ASS") else "utf-8"  # SRT 和 ASS 带 BOM，不少 Windows 播放器没有它会读错
+        try:
+            path.write_text(text, encoding=enc)
+        except OSError:
+            FALLBACK.mkdir(parents=True, exist_ok=True)
+            path = _free_path(FALLBACK / (src.stem + ext))
+            path.write_text(text, encoding=enc)
         known[fmt] = str(path)
         written.append(str(path))
     return written

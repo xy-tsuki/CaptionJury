@@ -282,8 +282,8 @@ class Api:
         j = store.load_job(jid)
         try:
             written = subtitles.export(j, formats)
-        except OSError as e:  # 源文件所在的文件夹被删了、移走了或没有写权限
-            return {"error": f"写不进源文件所在的文件夹：{e.strerror or e}"}
+        except OSError as e:  # 源文件旁边和备用文件夹都写不进去
+            return {"error": f"字幕写不进去：{e.strerror or e}"}
         store.save_job(j)
         return written
 
