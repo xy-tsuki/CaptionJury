@@ -161,6 +161,15 @@ def _outline_row(s):
 
 
 SOURCES = (("qwen2", "primary2"), ("moss", "moss"))
+NAMES = ((re.compile(r"(?<![A-Za-z])primary2(?![A-Za-z0-9])"), "Qwen 复核"), (re.compile(r"(?<![A-Za-z])primary(?![A-Za-z0-9])"), "Qwen"),
+         (re.compile(r"(?<![A-Za-z])moss(?![A-Za-z])"), "MOSS"), (re.compile(r"(?<![A-Za-z])backups(?![A-Za-z])"), "备用模型"))
+
+
+def readable(reason):
+    """DeepSeek 写理由时会用输入里的字段名（primary、moss），换成用户认得的模型名。"""
+    for pat, name in NAMES:
+        reason = pat.sub(name, reason)
+    return reason
 TRANSCRIPTS = ("qwen", "qwen2", "moss") + models.BACKUPS  # every field that holds a transcript of the sentence
 _KEEP = re.compile(r"[\W_]+")
 

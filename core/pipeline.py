@@ -243,6 +243,8 @@ class Queue:
         job["segments"] = sentences.place_extras(job["segments"], self.extras)
 
         job["segments"] = [s for s in job["segments"] if s["text"]]
+        for n, s in enumerate(job["segments"], 1):  # 去掉空句后重新编号，列表里的序号不跳
+            s["id"] = n
         job["speakers"] = speakers.number(job["segments"])
         for s in job["segments"]:
             s.pop("times", None)
@@ -450,7 +452,7 @@ class Queue:
             return group
         for s in new:
             agree = sentences.backups_agree(s)
-            s["why"] = item.get("reason", "") or ""
+            s["why"] = deepseek.readable(item.get("reason", "") or "")
             if item.get("uncertain"):
                 s["status"] = "ask"
             elif _norm(s["text"]) != _norm(s["qwen"]):
