@@ -58,6 +58,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
   - 接口方式：`proof_provider` 选服务商，`proof_url`、`proof_model` 是地址和模型；模型列表从接口的 `GET /models` 取。有的接口不认 `response_format`、`temperature` 或 `max_tokens`，报错时去掉那个参数重试，并记住（`Chat.drop`）。密钥按服务商分开保存：DeepSeek 沿用原来的 `deepseek.key`，其他在 `keys\<服务商>.key`。旧设置里的 `deepseek_url` / `deepseek_model` 读设置时改名。
   - Agent 方式：流水线线程停在 `Queue._wait_agent`，任务状态里有 `current["agent"]`（`k` 每次不同，`step` 是 `outline` 或 `proof`）；进度页拿 `agent_prompt` 显示提示词，用户粘贴后 `agent_submit` 先在 app 里解析和检查格式，不对直接告诉用户，对了才交给流水线。全文一次给完（不分批），结构不对的条目不追问、直接丢掉；可以跳过大纲或校对。等粘贴的时间不计入速度统计。
 - **校对 AI 的输出不直接信任**：结构不合法的条目（编号不相邻、跨说话人合并、删掉有内容的句子）会打回重写一次，还不行就丢掉；内容和各份识别结果对不上的条目不丢，而是标成存疑并写明原因，交给用户选。
+- **任务词库**：新建页的词库框只对这次转写生效，`Queue._one` 把它并进 `cfg["glossary"]`（设置里的术语表），所以 Qwen 提示、大纲、校对和校验都会用到；任务里记成 `job["terms"]`。词库可以导入多个 txt（首尾相连）、保存成 txt，也可以在 `#terms` 页让 AI 生成（`deepseek.terms_prompt` / `make_terms`，Agent 方式要求回纯词表，`clean_terms` 去掉编号和重复）。
 - **源文件名是专有名词的依据**：文件名（不含扩展名）作为 `title` 交给大纲和校对，里面常有主播名、作品名；校验修改时文件名和术语表里的字算作有依据。
 - **大纲放在备用模型之后**：大纲的输入除了 Qwen 的文字，还附上备用模型和 MOSS 写法不同的地方，便于认出专有名词；找到的词作为提示交给 Qwen 复核。
 - **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。
