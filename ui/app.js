@@ -556,17 +556,20 @@ function drawCmp() {
   const missed = !s.qwen;  // Qwen 没识别出、由其他模型补上的一条
   const backups = [['mimo', 'MiMo'], ['whisper', 'Whisper'], ['parakeet', 'Parakeet']].filter(([k]) => s[k]);
   if (s.alt) backups.push(['alt', s.alt_name]);  // 支持多个备用模型之前的旧任务
-  if (backups.length || s.qwen2 || s.moss || missed) {
+  const alts = s.alts || [];  // 切块交界处时间对不齐、又听写了一遍的文字，常带着前后句的一部分
+  if (backups.length || s.qwen2 || s.moss || missed || alts.length) {
     const base = missed ? s.text : s.qwen;  // 和 Qwen 比；Qwen 没有结果时和默认采用的写法比
     cands.push(['Qwen3-ASR', s.qwen, backups.length ? s[backups[0][0]] : s.qwen2 || s.moss || '']);
     if (s.qwen2) cands.push(['Qwen 复核', s.qwen2, base]);
     for (const [k, name] of backups) cands.push([name, s[k], base]);
     if (s.moss) cands.push(['MOSS', s.moss, base]);
+    const names = { qwen2: 'Qwen 复核', moss: 'MOSS', mimo: 'MiMo', whisper: 'Whisper', parakeet: 'Parakeet' };
+    for (const a of alts) cands.push([`${names[a.field] || a.field} 另一遍`, a.text, base, true]);
   }
-  const rows = cands.map(([who, t, other]) => {
+  const rows = cands.map(([who, t, other, alt]) => {
     if (!t) return `<div class="cd"><span class="who">${esc(who)}</span><span class="txt faint">没有结果</span></div>`;
     const ad = t === s.text;
-    return `<div class="cd${ad ? ' ad' : ''}"><span class="who">${esc(who)}</span><span class="txt" lang="${langAttr(s.lang)}">${markDiff(t, other)}</span><button class="btn sm${ad ? ' ghost' : ''}" type="button" data-adopt="${esc(t)}" ${ad ? 'disabled' : ''}>${ad ? '已采用' : '采用'}</button></div>`;
+    return `<div class="cd${ad ? ' ad' : ''}${alt ? ' alt' : ''}"><span class="who"${alt ? ' title="切块交界处时间没对齐，这个模型把这一段又听写了一遍，常带着前后句的一部分"' : ''}>${esc(who)}</span><span class="txt" lang="${langAttr(s.lang)}">${markDiff(t, other)}</span><button class="btn sm${ad ? ' ghost' : ''}" type="button" data-adopt="${esc(t)}" ${ad ? 'disabled' : ''}>${ad ? '已采用' : '采用'}</button></div>`;
   }).join('');
   $('#cmp').innerHTML = `
     <div class="cmp-h"><h2>第 ${s.id} 条<span class="stt ${stc(s.status)}"><i class="dot"></i>${TAGS[s.status] || '初稿'}</span></h2>${hasSpeakers() ? speakerBar(s) : ''}</div>

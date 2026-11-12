@@ -238,6 +238,8 @@ mark:empty{display:none}
 .cd.ad .who{color:var(--fg);font-weight:500}
 .cd.ad .txt{font-weight:500}
 .cd .btn{justify-self:end}
+.cd.alt{border-top-style:dashed}
+.cd.alt:not(.ad) .txt{color:var(--fg2)}
 .why{margin-top:10px;font-size:12.5px;line-height:1.6;padding:8px 10px;background:var(--asksoft);color:#5E3A0B}
 .why.fix{background:var(--fixsoft);color:var(--accfg)}
 .final{display:flex;flex-direction:column;gap:6px;margin-top:12px}

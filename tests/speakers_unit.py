@@ -52,6 +52,12 @@ assert [(s["text"], s["speaker"]) for s in segs] == [("我感觉", "1"), ("啥�
 # Sentences keep their speaker through DeepSeek's edits.
 g = [{"qwen": "金公塔在哪", "times": [], "speaker": "2", "a": 0, "b": 1, "lang": "zh", "alt": "", "alt_name": "", "chunk": 0}]
 assert sentences.apply_edit(g, "晴空塔在哪")[0]["speaker"] == "2"
+# “另一遍”的写法也跟着原句走：改写、拆分、合并后都还在
+g[0]["alts"] = [{"field": "moss", "text": "晴空塔在哪呀"}]
+assert sentences.apply_edit(g, "晴空塔在哪")[0]["alts"] == g[0]["alts"]
+assert all(s["alts"] == g[0]["alts"] for s in sentences.apply_edit(g, "晴空塔\n在哪"))
+g2 = g + [{"qwen": "好", "times": [], "speaker": "2", "a": 1, "b": 2, "lang": "zh", "chunk": 0}]
+assert sentences.apply_edit(g2, "晴空塔在哪好")[0]["alts"] == g[0]["alts"]
 
 # Numbers follow first appearance and skip people with no sentence left.
 segs = [{"speaker": "3"}, {"speaker": ""}, {"speaker": "1"}, {"speaker": "3"}]

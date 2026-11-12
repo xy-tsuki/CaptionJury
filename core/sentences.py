@@ -636,6 +636,9 @@ def apply_edit(group, text):
         if len(group) > 1:
             for f in OTHERS:
                 out[-1][f] = "".join(s.get(f, "") for s in group if id(s) in sources)
+        alts = [x for s in group if id(s) in sources for x in s.get("alts") or []]  # “另一遍”的写法跟着原句走
+        if alts:
+            out[-1]["alts"] = alts
     if len(group) == 1:
         for f in OTHERS:
             if group[0].get(f):
