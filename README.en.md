@@ -9,10 +9,12 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 ## Features
 
 - **Mixed Chinese and Japanese**: the main model, Qwen3-ASR 1.7B, handles sentences that switch between the two languages. A forced-alignment model times every character, and sentences are split at punctuation and pauses.
-- **Accuracy mode** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper and Parakeet for Japanese; choose them in Settings). DeepSeek writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and DeepSeek then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide.
+- **Multi-model comparison** (optional): backup models run per language (MiMo and Whisper for Chinese; Whisper and Parakeet for Japanese; choose them in Settings). The review page lists every model's version of each line so you can adopt one with a click.
+- **AI accuracy mode** (optional): DeepSeek writes an outline of the whole recording to find proper nouns, Qwen listens again with those terms as a hint, and DeepSeek then proofreads sentence by sentence, following what most transcripts agree on. Edits the transcripts do not support are not applied silently; they are marked "uncertain" for you to decide. It works best together with multi-model comparison, since there are more transcripts to compare.
 - **Speaker labels** (optional): MOSS-Transcribe-Diarize tells speakers apart and labels each subtitle.
 - **Nothing Qwen missed is dropped**: passages that other models heard but Qwen did not are listed as uncertain subtitles, which you can delete if they are wrong.
-- **Review page**: compare each model's version line by line and adopt one with a click; edit text, nudge in and out points, play a single line, delete (with undo), find and replace, then export.
+- **Review page**: compare each model's version line by line and adopt one with a click; edit text, nudge in and out points, play a single line, delete (with undo), find and replace, then export. An overview strip above the waveform marks where corrected and uncertain lines are in the whole recording.
+- **History**: every past result is kept; reopen it for review or export it again in another format.
 
 ## Requirements
 
@@ -29,11 +31,12 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 ## Usage
 
-1. **New** (新建): drop or pick files, choose the language (Chinese / Japanese / Chinese + Japanese), tick accuracy mode and speaker labels if wanted, choose subtitle formats, and start. Subtitles are written next to the source file.
+1. **New** (新建): drop or pick files, choose the language (Chinese / Japanese / Chinese + Japanese), tick multi-model comparison (多模型对照), AI accuracy mode (AI 精度优化) and speaker labels if wanted, choose subtitle formats, and start. Subtitles are written next to the source file.
 2. **Progress** (进度): one bar per model with an estimate of the time left; you can pause or cancel.
-3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "corrected" and "uncertain" lines. Click "Export subtitles" (导出字幕) when done.
+3. **Review** (校对): preview and the comparison of each model's version on the left, the subtitle list on the right, with filters for "uncertain" and "corrected" lines. Click "Export subtitles" (导出字幕) and pick the formats when done.
+4. **History** (历史): past results, which you can reopen for review, export, show in Explorer, or delete (only the saved result is deleted; the source file and exported subtitles stay).
 
-Accuracy mode needs DeepSeek: enter a DeepSeek API key in Settings (设置). The key is encrypted with Windows DPAPI, so only your Windows account can decrypt it. Only the recognised text is sent to DeepSeek, never the audio or video.
+AI accuracy mode needs DeepSeek: enter a DeepSeek API key in Settings (设置). The key is encrypted with Windows DPAPI, so only your Windows account can decrypt it. Only the recognised text is sent to DeepSeek, never the audio or video.
 
 ## Where data is kept
 
