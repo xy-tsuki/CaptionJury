@@ -33,7 +33,18 @@ def is_filler(text):
 
 
 COLLAPSED = 3  # 连续这么多个长度为 0、时间相同的词，是对齐失败堆在一处的，当作没有时间
+LOST = 10  # 堆在一处的字有这么多，多半是 Qwen 漏听了一段、对齐整段失败，值得提醒用户检查（短的只是语速快）
 CHAR_STEP = 0.2  # 没有时间的字按每字这么多秒排在有时间的字旁边
+
+
+def lost_alignment(words):
+    """这一块里有没有一大串字堆在同一点上（见 LOST）。"""
+    bad = sorted(_collapsed(words))
+    run = best = 0
+    for k, prev in zip(bad, [None] + bad):
+        run = run + 1 if prev is not None and k == prev + 1 else 1
+        best = max(best, run)
+    return best >= LOST
 
 
 def _collapsed(words):

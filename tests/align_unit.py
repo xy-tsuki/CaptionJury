@@ -38,4 +38,8 @@ stream = sentences.stitch([(0.0, 35.0, {"own0": 0.0, "own1": 35.0})], {0: t}, {0
 segs = sentences.build(stream, "zh")
 assert [s["qwen"] for s in segs] == ["你好。", "我们走吧"], segs
 assert 29.0 < segs[0]["a"] < segs[0]["b"] <= segs[1]["a"], [(s["a"], s["b"]) for s in segs]
+
+# 只有一大串字堆在一处才提醒用户；三五个字堆在一起只是语速快。
+assert not sentences.lost_alignment(words)
+assert sentences.lost_alignment([w("字", 0, 0)] * 12 + [w("们", 3000, 3020)])
 print("all passed")
