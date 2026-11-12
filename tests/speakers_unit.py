@@ -98,6 +98,29 @@ assert "[小明] 你好" in subtitles.srt(c) and "\n再见\n" in subtitles.srt(c
 assert "<v 小明>你好" in subtitles.vtt(c) and "小明：你好\n再见\n" == subtitles.txt(c)
 assert "Default,小明,0,0,0,,[小明] 你好" in subtitles.ass(c) and "Default,,0,0,0,,再见" in subtitles.ass(c)
 assert "小明" not in subtitles.srt(subtitles.cues(segs))
+# 按每条字数拆长句：先在句末标点后，再在逗号后，再在停顿最长处；拆开处的时间用那个字的开始时间
+long = {"a": 10.0, "b": 17.0, "text": "今天我们去了东京塔。人特别多但是风景很好看", "qwen": "今天我们去了东京塔人特别多但是风景很好看",
+        "ct": [10 + i * 0.25 for i in range(9)] + [13.0, 13.2, 13.4, 13.6] + [15.0 + i * 0.15 for i in range(7)]}
+c = subtitles.cues([long], max_chars=10)
+assert [x[2] for x in c] == ["今天我们去了东京塔。", "人特别多", "但是风景很好看"], c
+assert c[0][0] == 10.0 and c[1][0] == 13.0 and c[2][0] == 15.0 and c[-1][1] == 17.0, c
+assert [x[2] for x in subtitles.cues([long], max_chars=12)] == ["今天我们去了东京塔。", "人特别多但是风景很好看"]
+assert [x[2] for x in subtitles.cues([long], max_chars=28)] == [long["text"]]
+# 没有逐字时间（旧任务）时按字数分摊；不会把标点放到一条的开头
+c = subtitles.cues([dict(long, ct=None)], max_chars=12)
+assert c[0][2] == "今天我们去了东京塔。" and abs(c[1][0] - (10 + 10 * 7 / 21)) < 1e-9, c
+assert all(not x[2][0] in "。，、" for x in subtitles.cues([{"a": 0, "b": 5, "text": "あ、" * 10}], max_chars=6))
+# 没有标点时按字形猜词的分界：不拆常用词、汉字词和“お”接头词
+cut = lambda t, m=12: [x[2] for x in subtitles.cues([{"a": 0, "b": 5, "text": t, "qwen": t}], max_chars=m)]
+assert cut("なんかお葬式いいなって思う。") == ["なんかお葬式", "いいなって思う。"]
+assert cut("如果明天下雨的话我们就改到下周再去吧") == ["如果明天下雨的话", "我们就改到下周再去吧"]
+assert cut("我觉得这个方案其实还不错但是价格有点贵", 14) == ["我觉得这个方案其实还不错", "但是价格有点贵"]
+assert cut("シノギありがとうございます。") == ["シノギ", "ありがとうございます。"]
+# 改过的字对不上 Qwen 时，拆开处用按字数估的时间
+assert subtitles.char_times("东京塔很高", "东经他很高", [0, 1, 2, 3, 4]) == [0, None, None, 3, 4]
+# 不同用途的字数上限
+assert subtitles.LINE_MAX["wide"] > subtitles.LINE_MAX["tall"] and subtitles.LINE_MAX["full"] == subtitles.MAX_CHARS
+
 # 去掉标点：句号删掉，逗号和顿号换成空格，其他标点不动
 assert subtitles.plain("今日は、晴れ。そうだね，走吧。好吗？") == "今日は 晴れそうだね 走吧好吗？"
 assert subtitles.cues([{"a": 0, "b": 1, "text": "你好，再见。"}], no_punct=True)[0][2] == "你好 再见"

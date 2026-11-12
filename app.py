@@ -330,6 +330,15 @@ class Api:
         j["no_punct"] = bool(on)
         store.save_job(j)
 
+    def set_line_max(self, jid, kind):
+        """导出时每条字幕的字数（wide 横屏 / tall 竖屏 / full 不限）。也记进设置，下次新建的任务沿用。"""
+        if kind not in subtitles.LINE_MAX:
+            return
+        j = store.load_job(jid)
+        j["line_max"] = kind
+        store.save_job(j)
+        store.save_config({"line_max": kind})
+
     def export(self, jid, formats):
         j = store.load_job(jid)
         try:

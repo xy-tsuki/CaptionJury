@@ -690,9 +690,15 @@ def apply_edit(group, text):
         first = next((s for s in owner[q0:q1]), group[0])
         speaker = next((s["speaker"] for s in group if s.get("speaker")), "")
         a, b = (known[0][0], known[-1][1]) if known else (first["a"], first["b"])
+        # 新句子的 qwen 只留真的 Qwen 字（不含补插段的占位字），逐字时间跟着它走
+        own = [(c, tm) for c, tm, r in zip(q[q0:q1], times[q0:q1], real[q0:q1]) if r]
+        raw = "".join(c for c, _ in own)
+        lead = len(raw) - len(raw.lstrip())
+        qwen = raw.strip()
         out.append({
-            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": "".join(c for c, r in zip(q[q0:q1], real[q0:q1]) if r).strip(),
-            "text": line, "status": "raw", "why": "", "chunk": first["chunk"], "span": [q0, q1], "times": [], "speaker": speaker,
+            "id": 0, "a": a, "b": b, "lang": first["lang"], "qwen": qwen,
+            "text": line, "status": "raw", "why": "", "chunk": first["chunk"], "span": [q0, q1],
+            "times": [tm for _, tm in own][lead:lead + len(qwen)], "speaker": speaker,
             **dict.fromkeys(OTHERS, ""),
         })
         if len(group) > 1:

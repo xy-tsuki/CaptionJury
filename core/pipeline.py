@@ -208,6 +208,7 @@ class Queue:
         job = {
             "id": jid, "source": str(src), "name": src.name, "created": time.time(),
             "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": False, "no_punct": False,
+            "line_max": cfg.get("line_max", "wide"),
         }
         self.state["current"] = {"id": jid, "name": src.name, "lang": lang, "opt": opt, "compare": compare, "diarize": diarize, "pct": 0, "elapsed": 0, "remaining": None, "duration": duration, "lanes": [], "stream": [], "stream_name": ""}
         keys = ["extract", "vad"] + (["moss"] if diarize else []) + ["qwen"]
@@ -288,7 +289,8 @@ class Queue:
             s["id"] = n
         job["speakers"] = speakers.number(job["segments"])
         for s in job["segments"]:
-            s.pop("times", None)
+            # 只留每个字的开始时间（和 qwen 逐字对应），导出时按它拆长句；用户改了文字也能对回去
+            s["ct"] = [round(t[0], 2) if t else None for t in s.pop("times", None) or []]
             s.pop("spoken_end", None)
         store.save_job(job)  # 先存一份，导出出错也不丢结果
         job["written"] = subtitles.export(job, formats)

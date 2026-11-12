@@ -39,6 +39,7 @@ DEFAULTS = {
     "compare": True,
     "diarize": False,
     "formats": ["SRT", "ASS"],
+    "line_max": "wide",  # 导出时每条字幕的字数：wide 横屏、tall 竖屏、full 不限（subtitles.LINE_MAX）
     "speed": {},
 }
 

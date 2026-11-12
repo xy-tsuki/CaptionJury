@@ -67,6 +67,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **模型下载**：每个文件有三个来源：Hugging Face 原始仓库、hf-mirror（中国大陆镜像）、本项目 GitHub Release（发布附件）备份 `models-v1`。先下到 `.part`，大小和 SHA-256 都对上才改名成正式文件，所以半截文件不会被当成已安装。
 - **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\Tingxie`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。
 - **首次运行引导**：运行库或必装模型缺一个，启动时就进 `#setup` 页。运行库从 CrispASR 官方 Release 下载 zip（`models.RUNTIMES`，固定版本和 SHA-256），按 `nvidia-smi` 查到的驱动版本推荐 CUDA（驱动 580 以上）或 Vulkan。
+- **导出切条**：每句保留每个字的开始时间（`ct`，和 `qwen` 逐字对应，任务结束时由 `times` 转来）；导出时按 `job["line_max"]`（横屏 18 字、竖屏 12 字、不限 28 字，`subtitles.LINE_MAX`）拆长句，拆开处的时间用那个字的开始时间，改过的文字靠 difflib 对回 `qwen`，对不上或旧任务没有 `ct` 时按字数分摊。断点优先句末标点、逗号，其次按字形猜词的分界（`subtitles._score`：名词＋助词后、片假名词结束处、中文虚词前后；不拆常用词 `NO_SPLIT`、汉字词、促音和小写假名开头），再看停顿。没有分词工具，规则是凭经验定的。
 - **任务数据**：每个任务一个目录 `%LOCALAPPDATA%\Tingxie\jobs\<id>\`，里面有 job.json、音频和各模型的原始输出。
 
 ## 已知问题
