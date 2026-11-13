@@ -1,10 +1,10 @@
-# Tingxie
+# CaptionJury
 
-[中文](README.md)
+[中文](README.md)　Chinese name: 字幕对照组 · Japanese name: 字幕くらべラボ
 
 A Windows desktop tool that turns video or audio with mixed Chinese and Japanese speech into timed subtitles (SRT / ASS / VTT / TXT). All speech recognition runs on your own GPU, so audio and video never leave your computer. Optionally, an AI proofreads the text by comparing several transcripts: through the API of DeepSeek or another provider, or by copying a prompt to the Claude, ChatGPT or similar subscription you already have.
 
-> The name is provisional. This is a 0.x release; the interface and features will still change. The app's interface is in Chinese.
+> This is a 0.x release (formerly named Tingxie); the interface and features will still change. The app's interface is in Chinese.
 
 ## Features
 
@@ -27,7 +27,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 ## Install
 
-1. Download `Tingxie-Setup-<version>.exe` from [Releases](https://github.com/xy-tsuki/tingxie/releases) and run it. You can install for yourself only (no administrator rights needed) or for all users.
+1. Download `CaptionJury-Setup-<version>.exe` from [Releases](https://github.com/xy-tsuki/CaptionJury/releases) and run it. You can install for yourself only (no administrator rights needed) or for all users.
 2. The installer is not code-signed, so Windows may warn about an "unknown publisher" or SmartScreen may block it. Click "More info" → "Run anyway".
 3. On first launch a setup page detects your GPU, recommends the CUDA or Vulkan runtime, and downloads the runtime and the two required models. Models have three download sources (Hugging Face, the hf-mirror mirror, and this project's GitHub backup); it switches source on failure and resumes interrupted downloads.
 
@@ -47,7 +47,7 @@ Either way, only the recognised text is sent, never the audio or video.
 
 ## Where data is kept
 
-The program is installed in `%LOCALAPPDATA%\Programs\Tingxie` (for yourself) or Program Files. Runtimes, models, settings and jobs live in `%LOCALAPPDATA%\Tingxie`; upgrades leave them alone, and the uninstaller asks whether to delete them.
+The program is installed in `%LOCALAPPDATA%\Programs\CaptionJury` (for yourself) or Program Files. Runtimes, models, settings and jobs live in `%LOCALAPPDATA%\Tingxie`; upgrades leave them alone, and the uninstaller asks whether to delete them.
 
 ## Known limitations
 

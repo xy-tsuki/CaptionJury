@@ -214,7 +214,7 @@ WRITERS = {"SRT": (srt, ".srt"), "VTT": (vtt, ".vtt"), "ASS": (ass, ".ass"), "TX
 
 
 # 源文件所在的文件夹写不进去时（比如在 Program Files 里、文件夹被删了），改存到这里
-FALLBACK = Path(os.environ.get("USERPROFILE", Path.home())) / "Documents" / "听写字幕"
+FALLBACK = Path(os.environ.get("USERPROFILE", Path.home())) / "Documents" / "字幕对照组"
 
 
 def _free_path(path):

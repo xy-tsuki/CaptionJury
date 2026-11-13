@@ -41,7 +41,7 @@ rows += [
     "",
     "以下组件不在安装包里，由程序在第一次使用时从官方来源下载，许可证随下载文件一起提供：",
     "CrispASR 运行库  MIT（内含 NVIDIA CUDA 运行库，按 NVIDIA 的再分发条款随 CrispASR 发布）",
-    "语音识别模型  Apache-2.0 / MIT，详见 https://github.com/xy-tsuki/tingxie/releases/tag/models-v1",
+    "语音识别模型  Apache-2.0 / MIT，详见 https://github.com/xy-tsuki/CaptionJury/releases/tag/models-v1",
 ]
-(out / "THIRD_PARTY.txt").write_text("听写使用的第三方组件\n\n" + "\n".join(rows) + "\n", encoding="utf-8-sig")
+(out / "THIRD_PARTY.txt").write_text("字幕对照组使用的第三方组件\n\n" + "\n".join(rows) + "\n", encoding="utf-8-sig")
 print(f"{len(rows)} 项 -> {out}")

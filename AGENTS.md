@@ -1,4 +1,6 @@
-# 听写（暂定名，仓库名 tingxie）
+# 字幕对照组（英文 CaptionJury，日文 字幕くらべラボ；仓库 xy-tsuki/CaptionJury）
+
+原名「听写 / Tingxie」，2026-11-13 改名。为了不影响已有的数据和安装，这些地方沿用旧名：数据目录 `%LOCALAPPDATA%\Tingxie`、环境变量 `TINGXIE_HOME`、安装包的 `AppId`、本地开发目录和 venv 路径。
 
 ## 项目是什么
 Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字幕（SRT / ASS / VTT / TXT）。在本机 GPU 上跑语音识别，再由大语言模型对照几份识别结果校对（默认 DeepSeek，也可以换别家接口，或者复制给用户订阅的 Agent）。用户自己用，暂未发布。
@@ -17,7 +19,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 ## 目录结构
 - `app.py`：程序入口。启动本机 HTTP 服务和 WebView2 窗口，`Api` 类是前端可调用的全部接口。
 - `core/version.py`：版本号。发版时改这里，tag 必须是 `v` 加这个版本号。
-- `packaging/`：打包和安装包。`build.ps1` 是唯一的构建入口（本机和 CI 共用）；`tingxie.spec` 是 PyInstaller 配置；`installer.iss` 是 Inno Setup 安装包脚本；`collect_licenses.py` 收集第三方许可证；`make_icon.py` 生成 `icon.ico`；`release-notes.md` 是 Release 说明模板。
+- `packaging/`：打包和安装包。`build.ps1` 是唯一的构建入口（本机和 CI 共用）；`captionjury.spec` 是 PyInstaller 配置；`installer.iss` 是 Inno Setup 安装包脚本；`collect_licenses.py` 收集第三方许可证；`make_icon.py` 生成 `icon.ico`；`release-notes.md` 是 Release 说明模板。
 - `core/pipeline.py`：任务队列和整条流水线（抽音频 → 检测人声 → 切块 → MOSS → Qwen → 断句 → 备用模型 → AI 大纲 → Qwen 复核 → AI 校对 → 写字幕），也负责调用 crispasr.exe。
 - `core/models.py`：模型清单。每个模型的用途、所需文件（含 Hugging Face 仓库、大小、SHA-256）、默认路径、下载来源、CrispASR 参数，以及每种语言用哪些备用模型。加新模型从这里开始。
 - `core/download.py`：模型和运行库下载器。断点续传、SHA-256 校验、失败自动换源；GitHub 备份里超过 2 GB 的文件分卷下载；运行库 zip 下完后解压到数据目录。
@@ -36,7 +38,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 ## 常用命令
 命令里的 `PY` 指 `%LOCALAPPDATA%\Tingxie\venv\Scripts\python.exe`（开发用的虚拟环境，第一次用 `python -m venv %LOCALAPPDATA%\Tingxie\venv` 建好，再 `PY -m pip install -r requirements.txt`）。
 - 开发运行：`PY app.py`。需要图形界面；运行库和模型可以在程序的引导页下载，也可以在设置里指向已有文件。
-- 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\Tingxie-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\Tingxie\Tingxie.exe`（目录结构和安装后一样，可以直接运行）。
+- 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\CaptionJury-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\CaptionJury\CaptionJury.exe`（目录结构和安装后一样，可以直接运行）。
 - 发版：改 `core/version.py` → 合并到 main → 推送 `vX.Y.Z` tag，`.github/workflows/release.yml` 会构建安装包并发 Release。在 Actions 页面手动运行同一个流程只构建、不发版，安装包在构建产物里，用来发版前试装。
 - 语法检查：`PY -m compileall -q app.py core tests`
 - 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`、`PY tests/align_unit.py`
@@ -66,7 +68,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **大纲放在备用模型之后**：大纲的输入除了 Qwen 的文字，还附上备用模型和 MOSS 写法不同的地方，便于认出专有名词；找到的词作为提示交给 Qwen 复核。
 - **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。提示最多 `HINT_MAX`（40）个词：试过近 300 个词，Qwen 并没有因此写对，反而带偏读音相近的话；完整词库只交给 AI。
 - **模型下载**：每个文件有三个来源：Hugging Face 原始仓库、hf-mirror（中国大陆镜像）、本项目 GitHub Release（发布附件）备份 `models-v1`。先下到 `.part`，大小和 SHA-256 都对上才改名成正式文件，所以半截文件不会被当成已安装。
-- **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\Tingxie`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。
+- **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\CaptionJury`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。
 - **首次运行引导**：运行库或必装模型缺一个，启动时就进 `#setup` 页。运行库从 CrispASR 官方 Release 下载 zip（`models.RUNTIMES`，固定版本和 SHA-256），按 `nvidia-smi` 查到的驱动版本推荐 CUDA（驱动 580 以上）或 Vulkan。
 - **校对页按导出的样子拆好**：任务结束时和打开任务时（`app.Api.job`），`lines.ensure` 按 `job["line_max"]` 把长句拆成一条条（`job["split"]` 记着按哪种字数拆的），每条有自己的文字、`qwen`、`ct`、时间和各模型的写法（`sentences.cut_at` 按位置切），同一句拆出来的几条 `src` 相同，第一条的 `full` 存着各模型的整句写法。换每条字数时先拼回原句（状态取最需要注意的那个），再按新字数拆；拼回时各条手动改过的内部时间会丢掉。用户把一条改长了，导出时照样再拆，校对页在拆开处画一条竖线（`subtitles.breaks`）。
 - **改出入点**：校对页底部时间条上，每个方块左右边缘可以拖动；和相邻一条首尾相连时，交界处一起移动。松手才调 `set_times`，服务器把时间夹在前后两条之间。

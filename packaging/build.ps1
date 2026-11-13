@@ -4,7 +4,7 @@
 
     powershell -ExecutionPolicy Bypass -File packaging\build.ps1 [-Python python] [-Iscc 路径] [-SkipInstaller]
 
-输出：build\dist\Tingxie\Tingxie.exe 和 build\installer\Tingxie-Setup-<版本>.exe
+输出：build\dist\CaptionJury\CaptionJury.exe 和 build\installer\CaptionJury-Setup-<版本>.exe
 下载的 FFmpeg 和 WebView2 安装器缓存在 build\cache，下次不重复下载。
 #>
 param(
@@ -37,7 +37,7 @@ function Run($exe, [string[]]$argv) {
 }
 
 $Version = (Select-String -Path "core\version.py" -Pattern 'VERSION = "([^"]+)"').Matches[0].Groups[1].Value
-Step "听写 $Version"
+Step "字幕对照组 $Version"
 
 Step "准备打包用的虚拟环境 build\venv"
 $Venv = Join-Path $Build "venv"
@@ -46,8 +46,8 @@ if (-not (Test-Path $Py)) { Run $Python @("-m", "venv", $Venv) }
 Run $Py @("-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", "packaging\requirements-build.txt")
 
 Step "PyInstaller 打包"
-Remove-Item -Recurse -Force (Join-Path $Dist "Tingxie") -ErrorAction SilentlyContinue
-Run $Py @("-m", "PyInstaller", "packaging\tingxie.spec", "--noconfirm", "--distpath", $Dist, "--workpath", (Join-Path $Build "work"))
+Remove-Item -Recurse -Force (Join-Path $Dist "CaptionJury") -ErrorAction SilentlyContinue
+Run $Py @("-m", "PyInstaller", "packaging\captionjury.spec", "--noconfirm", "--distpath", $Dist, "--workpath", (Join-Path $Build "work"))
 
 Step "FFmpeg $FfmpegVer"
 $Zip = Join-Path $Cache "ffmpeg-$FfmpegVer.zip"
@@ -59,7 +59,7 @@ $Tmp = Join-Path $Build "ffmpeg-unzip"
 Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 Expand-Archive $Zip $Tmp
 $Top = Get-ChildItem $Tmp -Directory | Select-Object -First 1
-$App = Join-Path $Dist "Tingxie"  # 和安装后的目录结构一样：ffmpeg 和 licenses 都在 exe 旁边
+$App = Join-Path $Dist "CaptionJury"  # 和安装后的目录结构一样：ffmpeg 和 licenses 都在 exe 旁边
 $Ff = New-Item -ItemType Directory -Force (Join-Path $App "ffmpeg")
 Copy-Item (Join-Path $Top.FullName "bin\ffmpeg.exe"), (Join-Path $Top.FullName "bin\ffprobe.exe") $Ff
 
@@ -81,7 +81,7 @@ if ($Sig.Status -ne "Valid" -or $Sig.SignerCertificate.Subject -notmatch "O=Micr
 }
 Copy-Item $Wv2 $Dist -Force
 
-if ($SkipInstaller) { Step "跳过安装包。程序在 $Dist\Tingxie"; exit 0 }
+if ($SkipInstaller) { Step "跳过安装包。程序在 $Dist\CaptionJury"; exit 0 }
 
 Step "Inno Setup 生成安装包"
 if (-not $Iscc) {

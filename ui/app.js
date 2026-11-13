@@ -89,7 +89,7 @@ function exportMenu(jid, small = true) {
     <summary class="btn ${small ? 'sm' : ''} solid">${I.down}导出字幕</summary>
     <div class="menu-pop">
       <div class="fmts">${FORMATS.map((x) => `<button type="button" class="fmt mono${f.includes(x) ? ' on' : ''}" data-xf="${x}" aria-pressed="${f.includes(x)}">${x}</button>`).join('')}</div>
-      <p>写在源文件所在的文件夹（写不进去时存到"文档\听写字幕"），再次导出会覆盖上次导出的文件。</p>
+      <p>写在源文件所在的文件夹（写不进去时存到"文档\字幕对照组"），再次导出会覆盖上次导出的文件。</p>
       <button class="btn sm solid" type="button" data-xgo>导出</button>
       <details class="howto"><summary>怎么导入剪辑软件</summary>
         <p>都用 SRT，菜单名称以你的软件版本为准：</p>
@@ -965,7 +965,7 @@ async function renderSettings() {
           <label class="lab"><span>运行库目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
           <div><a class="btn sm" href="#setup">打开安装引导，下载运行库</a></div>
-          <p class="faint small">听写 ${esc(c.version)}</p>
+          <p class="faint small">字幕对照组 ${esc(c.version)}</p>
         </div>
       </section>
       <section class="sec" id="terms">
@@ -1146,7 +1146,7 @@ async function watchDownloads() {
 }
 
 function showSys(backend) {
-  $('#sys').innerHTML = `${backend === 'cuda' ? 'GPU · CUDA 13' : 'GPU · Vulkan'}<br>听写 ${esc(S.cfg.version)}`;
+  $('#sys').innerHTML = `${backend === 'cuda' ? 'GPU · CUDA 13' : 'GPU · Vulkan'}<br>字幕对照组 ${esc(S.cfg.version)}`;
 }
 
 async function poll() {
