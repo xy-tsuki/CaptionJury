@@ -38,7 +38,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 ## 常用命令
 命令里的 `PY` 指 `%LOCALAPPDATA%\Tingxie\venv\Scripts\python.exe`（开发用的虚拟环境，第一次用 `python -m venv %LOCALAPPDATA%\Tingxie\venv` 建好，再 `PY -m pip install -r requirements.txt`）。
 - 开发运行：`PY app.py`。需要图形界面；运行库和模型可以在程序的引导页下载，也可以在设置里指向已有文件。
-- 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\CaptionJury-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\Tingxie\Tingxie.exe`（目录结构和安装后一样，可以直接运行）。
+- 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\CaptionJury-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\CaptionJury\CaptionJury.exe`（目录结构和安装后一样，可以直接运行）。
 - 发版：改 `core/version.py` → 合并到 main → 推送 `vX.Y.Z` tag，`.github/workflows/release.yml` 会构建安装包并发 Release。在 Actions 页面手动运行同一个流程只构建、不发版，安装包在构建产物里，用来发版前试装。
 - 语法检查：`PY -m compileall -q app.py core tests`
 - 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`、`PY tests/align_unit.py`
