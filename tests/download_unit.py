@@ -216,6 +216,19 @@ assert not st["paused"] and not st["queue"] and st["current"] is None and "已�
 assert not (tmp / "r" / "big.gguf.part").exists()
 dl.pause()  # 没东西可暂停时什么也不做
 assert not dl.status()["paused"]
+
+cfg["whisper_model"] = str(tmp / "s" / "big.gguf")  # 暂停后只取消这一项（PR #5 review）：删掉，继续也不再下
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.pause()
+wait(lambda: not dl._thread.is_alive())
+assert (dl.state["current"] or {}).get("name") == name and (tmp / "s" / "big.gguf.part").exists()
+dl.cancel(name)
+st = dl.status()
+assert not st["queue"] and st["current"] is None and not st["paused"] and "已取消" in st["failed"][name], st
+assert not (tmp / "s" / "big.gguf.part").exists()
+dl.resume()
+assert not dl.queue and not (dl._thread and dl._thread.is_alive()) and not Path(cfg["whisper_model"]).exists()
 SLOW[0] = False
 models.MODELS[name]["files"]["whisper_model"] = real
 print("all passed")

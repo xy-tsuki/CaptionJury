@@ -154,12 +154,14 @@ class Downloader:
                     self._stop = "cancel"
                 else:  # 暂停着、没有线程在下：暂停的那项已经在上面随队列删掉了
                     self.state["current"] = None
-            elif name == cur:
+            elif name == cur and self._thread and self._thread.is_alive():  # 正在下：让线程停下后自己删
                 self._stop = "cancel"
             elif name in self.queue:  # 排队的（包括暂停着的那项）没有线程在写，直接删
                 self.queue.remove(name)
                 self.state["failed"][name] = CANCELLED
                 self._discard(name)
+                if name == cur:  # 暂停着的那项：线程已经退出，界面上不再显示它
+                    self.state["current"] = None
             if self.state["paused"] and not self.queue:  # 暂停着的那项被取消了，就没有可继续的了
                 self.state["paused"] = False
                 self.state["current"] = None
