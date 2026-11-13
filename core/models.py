@@ -15,13 +15,21 @@ def _f(path, repo, size, sha256):
 
 
 # role："main" 必装；"diarize" 只在区分说话人时需要；"backup" 是用户按语言勾选的备用模型，
-# 多出一份识别结果给 DeepSeek 投票。
+# 多出一份识别结果给 DeepSeek 投票；"light" 是轻量模式换用的小主模型。
+# vram：大约要多少显存（MiB，含对齐模型），runtime 选显卡时按它筛。
 MODELS = {
     "qwen": {
         "label": "Qwen3-ASR 1.7B", "role": "main",
         "files": {"qwen_model": _f(r"Qwen3-ASR-1.7B\qwen3-asr-1.7b-q8_0.gguf", "cstr/qwen3-asr-1.7b-GGUF", 2506723200,
                                  "9851ab996591a2d0cb0efb216002764b509c86bd40c95e613d7b65b8e69c8a6e")},
-        "desc": "主识别模型，中日混说都能听，带标点。",
+        "desc": "主识别模型，中日混说都能听，带标点。", "vram": 4000,
+    },
+    "qwen06": {
+        "label": "Qwen3-ASR 0.6B（轻量）", "role": "light",
+        # 不进 GitHub 备份 models-v1（备份发布之后才加），只有 Hugging Face 和 hf-mirror 两个来源
+        "files": {"qwen06_model": _f(r"Qwen3-ASR-0.6B\qwen3-asr-0.6b-q4_k.gguf", "cstr/qwen3-asr-0.6b-GGUF", 631026336,
+                                   "f63771c02dfa486d9399d41ab6ab8cd2d8ca24e077cd32130ea1f67f4fd8dade")},
+        "desc": "轻量模式用的小模型，内存和显存不够、或者只想快点出个草稿时用。比 1.7B 快，错字多一些。", "vram": 2000,
     },
     "aligner": {
         "label": "Qwen3 强制对齐", "role": "main",
@@ -132,6 +140,8 @@ def args(cfg, name):
     """让 CrispASR 使用这个模型的命令行参数。"""
     if name == "qwen":
         return ["--backend", "qwen3-1.7b", "-m", cfg["qwen_model"]]
+    if name == "qwen06":
+        return ["--backend", "qwen3", "-m", cfg["qwen06_model"]]
     if name == "mimo":
         return ["--backend", "mimo-asr", "-m", cfg["mimo_model"], "--codec-model", cfg["mimo_codec"]]
     if name == "whisper":

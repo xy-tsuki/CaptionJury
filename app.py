@@ -120,11 +120,16 @@ class Api:
             return {"error": "正在测速，结束后再开始转写"}
         if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
+        light = mode == "light"
+        if light:
+            if not models.installed(cfg, "qwen06"):
+                return {"error": "轻量模式要用 Qwen3-ASR 0.6B，请先在设置的「本地模型」里下载"}
+            opt = compare = diarize = False
         if diarize and not Path(store.load_config()["moss_model"]).exists():
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
         store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize, "mode": mode})
         try:
-            self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms))
+            self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms), light=light)
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
@@ -146,7 +151,8 @@ class Api:
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存"}
         files = [job["source"]] + [f for f in p.get("rest", []) if Path(f).is_file()]
         try:
-            self._queue.start(files, p["lang"], p["opt"], p["formats"], p["diarize"], p["compare"], p["terms"], resume=jid)
+            self._queue.start(files, p["lang"], p["opt"], p["formats"], p["diarize"], p["compare"], p["terms"], resume=jid,
+                              light=p.get("light", False))
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
@@ -403,6 +409,7 @@ class Api:
         cfg["version"] = VERSION
         cfg["backups_active"] = {lang: [models.MODELS[k]["short"] for k in models.backups_for(cfg, lang)] for lang in ("zh", "ja")}
         cfg["backups_keys"] = {lang: list(models.backups_for(cfg, lang)) for lang in ("zh", "ja")}  # 估算用时按这些键查速度
+        cfg["light_ok"] = models.installed(cfg, "qwen06")
         return cfg
 
     def save_config(self, changes):

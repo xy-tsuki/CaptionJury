@@ -136,19 +136,20 @@ const tipSeen = (k) => { try { return localStorage.getItem('tip_' + k) === '1'; 
 const tipHide = (k) => { try { localStorage.setItem('tip_' + k, '1'); } catch { /* 存不了就下次再显示 */ } };
 
 /* ---------- 新建 ---------- */
-/* 三种模式：快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
+/* 四种模式：轻量用小模型；快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
 const MODES = {
+  light: ['轻量', '小模型，内存或显存不够的电脑用，错字多一些。'],
   fast: ['快速', '只用主模型，最快出字幕。'],
   accurate: ['精准', '几个模型对照，AI 逐句校对，拿不准的标出来。'],
   custom: ['自定义', '自己选多模型对照和 AI 校对。'],
 };
-const modeFlags = (m) => (m === 'fast' ? { opt: false, compare: false } : m === 'accurate' ? { opt: true, compare: true } : { opt: S.opt, compare: S.compare });
+const modeFlags = (m) => (m === 'fast' || m === 'light' ? { opt: false, compare: false } : m === 'accurate' ? { opt: true, compare: true } : { opt: S.opt, compare: S.compare });
 
 /* 按以往的速度估算这次要多久（不含等你粘贴 Agent 回复的时间）；没有记录或没加文件时返回空 */
 function estimate(m) {
   const sp = (S.cfg && S.cfg.speed) || {};
   const total = S.files.reduce((a, f) => a + (f.duration || 0), 0);
-  if (!total || !sp.qwen) return '';
+  if (!total || !sp.qwen || m === 'light') return '';  // 轻量模式的速度单独记，还没有可参考的
   const { opt, compare } = modeFlags(m);
   let r = (sp.extract || 0) + (sp.vad || 0) + sp.qwen + (S.dia ? sp.moss || 0 : 0);
   if (compare) {
@@ -204,7 +205,7 @@ function renderNew() {
               <p>${esc(proofName())} 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后对照各份结果逐句校对。只发送文字。${agentMode() ? '跑到这一步时会暂停，在进度页复制提示词给 Agent，再把回复粘贴回来。' : ''}</p>
               ${S.opt && S.cfg && !agentMode() && !S.cfg.has_key ? `<span class="warn">还没有保存 ${esc(proofName())} 的密钥，到设置里填写，或者改用复制给 Agent 的方式。</span>` : ''}</label>
           </div>` : ''}
-          <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
+          <label class="opt check"${S.mode === 'light' ? ' hidden' : ''}><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
             <p>分出是谁在说话，标到每条字幕上。适合访谈、对谈和会议；一个人讲的视频不用开。</p></label>
         </div>
         <div class="m-sec"><span class="lbl">字幕格式</span><div class="fmts" role="group" aria-label="字幕格式">${fmts}</div><span class="faint small">保存在源文件所在的文件夹。</span></div>
@@ -248,6 +249,8 @@ function renderNew() {
 function modeWarn() {
   const { opt, compare } = modeFlags(S.mode);
   const out = [];
+  if (S.mode === 'light' && S.cfg && !S.cfg.light_ok) out.push('轻量模式要用 Qwen3-ASR 0.6B（631 MB），<a href="#settings">到设置的「本地模型」里</a>下载。');
+  if (S.mode === 'light') out.push('轻量模式不区分说话人。只导出 TXT 时不做逐字对齐，更快。');
   if (opt && S.cfg && !agentMode() && !S.cfg.has_key) out.push(`AI 校对需要先设置：<a href="#settings">到设置里</a>填 ${esc(proofName())} 的 API 密钥，或者改用“复制给 Agent”（用你订阅的 AI，不需要密钥）。`);
   if (compare && !activeBackups().some(([, ms]) => ms.length)) out.push('没有可用的备用模型，只会用主模型识别。<a href="#settings">到设置里</a>下载并勾选。');
   if (opt && agentMode() && S.mode !== 'custom') out.push('跑到 AI 校对时会暂停，在进度页把提示词复制给你的 Agent，再把回复粘贴回来。');
@@ -264,7 +267,7 @@ async function start() {
   if (!S.files.length) return toast('请先添加文件');
   if (!S.formats.length) return toast('请至少选择一种字幕格式');
   const { opt, compare } = modeFlags(S.mode);
-  const r = await api().start(S.files.map((f) => f.path), S.lang, opt, S.formats, S.dia, compare, S.terms, S.mode);
+  const r = await api().start(S.files.map((f) => f.path), S.lang, opt, S.formats, S.mode === 'light' ? false : S.dia, compare, S.terms, S.mode);
   if (r.error) return toast(r.error);
   S.files = [];
   location.hash = '#progress';
@@ -907,7 +910,7 @@ function drawHistory() {
       const p = j.params || { lang: j.lang, opt: j.opt, compare: j.compare, diarize: j.diarize };
       S.lang = p.lang || S.lang; S.opt = !!p.opt; S.compare = !!p.compare; S.dia = !!p.diarize;
       if (p.formats) S.formats = p.formats;
-      S.mode = S.opt && S.compare ? 'accurate' : !S.opt && !S.compare ? 'fast' : 'custom';
+      S.mode = p.light ? 'light' : S.opt && S.compare ? 'accurate' : !S.opt && !S.compare ? 'fast' : 'custom';
       S.files = got;
       location.hash = '#new';
       toast('已放进新建页，确认设置后点开始');
@@ -979,6 +982,7 @@ async function renderSettings() {
         <div class="stack">
           <h3>必装</h3>${group('main')}
           <h3>区分说话人</h3>${group('diarize')}
+          <h3>轻量模式</h3>${group('light')}
           <h3>备用模型</h3>${group('backup')}
         </div>
       </section>

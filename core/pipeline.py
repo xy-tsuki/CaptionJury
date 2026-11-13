@@ -162,7 +162,7 @@ class Queue:
         return now - self.paused_for - ((now - self.paused_at) if self.paused_at else 0)
 
     # ---------- control ----------
-    def start(self, files, lang, opt, formats, diarize=False, compare=False, terms=(), resume=None):
+    def start(self, files, lang, opt, formats, diarize=False, compare=False, terms=(), resume=None, light=False):
         """开始转写一串文件。resume 是没跑完的任务编号：第一个文件沿用那个任务的目录，跑过的步骤不重跑。"""
         if self.state["running"]:
             raise RuntimeError("已有任务正在运行")
@@ -174,6 +174,7 @@ class Queue:
             "queue": [Path(f).name for f in files], "index": 0, "total": len(files), "done": [], "queue_pct": 0,
         }
         self.resume_id = resume
+        self.light = light  # 轻量模式：主模型换成 Qwen3-ASR 0.6B，不做对照、AI 校对和说话人区分
         self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize, compare, list(terms)), daemon=True)
         self.thread.start()
 
@@ -213,7 +214,7 @@ class Queue:
             for i, f in enumerate(files):
                 self.state["index"] = i
                 job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare, terms,
-                                rest=list(files[i + 1:]), resume=self.resume_id if i == 0 else None)
+                                rest=list(files[i + 1:]), resume=self.resume_id if i == 0 else None, light=self.light)
                 self.state["done"].append(job["id"])
             self.state["queue_pct"] = 100
             self.state["finished"] = self.state["done"][-1] if self.state["done"] else None
@@ -250,8 +251,13 @@ class Queue:
             time.sleep(0.25)
 
     # ---------- one file ----------
-    def _one(self, source, lang, opt, formats, duration, diarize, compare=False, terms=(), rest=(), resume=None):
+    def _one(self, source, lang, opt, formats, duration, diarize, compare=False, terms=(), rest=(), resume=None, light=False):
         cfg = store.load_config()
+        if light:
+            opt = compare = diarize = False
+        self.main = "qwen06" if light else "qwen"
+        # 只要纯文本时不用逐字时间；轻量模式下省掉对齐模型（字幕格式要时间轴，照常对齐）
+        self.align = not (light and set(formats) <= {"TXT"})
         # 新建页的词库只对这次转写生效：并进设置里的术语表，Qwen 提示和校对都用它
         cfg["glossary"] = "\n".join(dict.fromkeys(deepseek.glossary(cfg) + list(terms)))
         if resume:  # 接着跑：沿用原来的目录、编号和创建时间，目录里已有的结果按指纹沿用
@@ -263,7 +269,8 @@ class Queue:
             "id": jid, "source": str(src), "name": src.name, "created": created, "state": "running",
             # 接着跑时照原样再来一遍要用的参数；rest 是排在它后面、还没开始的文件
             "params": {"lang": lang, "opt": opt, "formats": list(formats), "diarize": diarize, "compare": compare,
-                       "terms": list(terms), "rest": list(rest)},
+                       "terms": list(terms), "rest": list(rest), "light": light},
+            "light": light,
             "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": False, "no_punct": False,
             "line_max": cfg.get("line_max", "wide"),
         }
@@ -283,11 +290,13 @@ class Queue:
         self.job = job
         store.save_job(job)  # 先存一份：程序中途被关掉，历史页也能看到它、接着跑
         self._pick_runtime(cfg, job)
-        rates = cfg.get("speed_rt", {}).get(self.rt["key"]) or (cfg["speed"] if self.rt["gpu"] else {})
+        rates = cfg.get("speed_rt", {}).get(self.rt["key"] + ("_light" if light else "")) or (cfg["speed"] if self.rt["gpu"] and not light else {})
         self.tracker = progress.Tracker(keys, duration, self.state["current"], rates, self._clock)
         self.extras = []  # Qwen 没识别出、其他模型听到的段落；开了 AI 校对时校对前插进去交给 AI，否则最后插成存疑字幕
         for lane in self.state["current"]["lanes"]:
             lane["name"] = NAMES[lane["key"]]
+            if light and lane["key"] == "qwen":
+                lane["name"] = "Qwen3-ASR 0.6B"
 
         self._extract(cfg, src, d, job)
         slices = self._segment(cfg, d)
@@ -301,7 +310,7 @@ class Queue:
         qwen, words = self._asr(cfg, "qwen", d, slices, asr_lang, context=_hint(deepseek.glossary(cfg)))
         who = speakers.resolve(qwen, *turns) if turns else None
         segs = sentences.build(sentences.stitch(slices, qwen, words, who), lang)
-        if not any(words.values()):
+        if not any(words.values()) and self.align:  # 轻量模式只要 TXT 时故意不对齐，不用提醒
             job["warnings"].append("没有拿到逐字时间，字幕时间是按字数估算的")
         else:
             lost = [slices[i][:2] for i in sorted(words) if sentences.lost_alignment(words[i])]
@@ -361,8 +370,8 @@ class Queue:
             job["warnings"].append(f"源文件所在的文件夹没有写入权限，字幕存到了 {Path(moved[0]).parent}")
         job["state"] = "done"
         store.save_job(job)
-        if self.rt["key"] == self.rt_first:  # 中途换过运行库时速度混在一起，不记
-            store.save_config({"speed_rt": cfg.get("speed_rt", {}) | {self.rt["key"]: self.tracker.rates}})
+        if self.rt["key"] == self.rt_first:  # 中途换过运行库时速度混在一起，不记；轻量模式单独记
+            store.save_config({"speed_rt": cfg.get("speed_rt", {}) | {self.rt["key"] + ("_light" if light else ""): self.tracker.rates}})
         return job
 
     def _extract(self, cfg, src, d, job):
@@ -414,7 +423,7 @@ class Queue:
 
     def _pick_runtime(self, cfg, job, failed=None):
         """选运行库和显卡（runtime.pick），把实际设备写进任务状态和任务文件。"""
-        self.rt = runtime.pick(cfg, failed)
+        self.rt = runtime.pick(cfg, failed, self.main)
         self.rt_failed = dict(failed or {})
         if failed is None:
             self.rt_first = self.rt["key"]
@@ -453,7 +462,7 @@ class Queue:
                 self.state["current"].setdefault("warnings", []).append(f"{runtime.label(bad)} {why}，改用 {self.rt['label']} 重跑")
 
     def _model_args(self, cfg, key):
-        return models.args(cfg, "qwen" if key == "qwen2" else key)
+        return models.args(cfg, self.main if key in ("qwen", "qwen2") else key)
 
     def _spawn(self, cmd, cwd, on_err=None, on_out=None, what="语音识别进程退出"):
         self._check()
@@ -589,7 +598,7 @@ class Queue:
         """Runs one model over these chunks; returns text and timed characters, keyed by chunk index."""
         idx = list(range(len(slices))) if only is None else only
         args = ["-l", lang]
-        if key in ("qwen", "qwen2") and Path(cfg["aligner_model"]).exists():
+        if key in ("qwen", "qwen2") and self.align and Path(cfg["aligner_model"]).exists():
             args += ["-am", cfg["aligner_model"]]
         if key in ("qwen", "qwen2") and context:
             args += ["--context", context]

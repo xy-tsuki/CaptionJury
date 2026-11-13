@@ -15,7 +15,7 @@ from pathlib import Path
 from . import models
 
 NO_WINDOW = 0x08000000
-MIN_VRAM_MB = 4000  # Qwen3-ASR 1.7B q8_0 加对齐模型大约要 3.5 GB 显存，总显存比这小的卡不选
+MIN_VRAM_MB = 4000  # 模型清单里没写 vram 时的默认值：Qwen3-ASR 1.7B q8_0 加对齐模型大约要 3.5 GB 显存
 # --diagnostics 里每个设备一行："[0] gpu    name=CUDA0 desc=NVIDIA GeForce RTX 3060 Laptop GPU mem=11250/12287 MiB id=..."
 DEVICE = re.compile(r"^\s*\[\d+\]\s+gpu\s+name=(\S+)\s+desc=(.*?)\s+mem=(\d+)/(\d+)\s*MiB", re.M)
 # 跑任务时 stderr 里出现这些，说明是运行库或显卡的问题，自动模式下换下一个运行库重跑
@@ -136,23 +136,23 @@ def _short(desc):
     return re.sub(r"^(NVIDIA|AMD|Intel\(R\))\s+(GeForce\s+)?", "", desc).strip() or desc
 
 
-def _device(cfg, key, devices):
+def _device(cfg, key, devices, need=MIN_VRAM_MB):
     """在诊断出的 GPU 里选一块：设置里指定了编号就用它，否则选总显存最大的。返回 (编号, 设备) 或 (None, 原因)。"""
     want = str(cfg.get("gpu_device", "auto"))
     if want != "auto":
         i = int(want) if want.isdigit() else -1
         if not 0 <= i < len(devices):
             return None, f"没有编号 {want} 的显卡"
-        if devices[i]["total"] < MIN_VRAM_MB:
+        if devices[i]["total"] < need:
             return None, f"显存不足（{devices[i]['total'] / 1024:.0f} GB）"
         return i, devices[i]
-    big = [(i, d) for i, d in enumerate(devices) if d["total"] >= MIN_VRAM_MB]
+    big = [(i, d) for i, d in enumerate(devices) if d["total"] >= need]
     if not big:
         return None, f"显存不足（{max(d['total'] for d in devices) / 1024:.0f} GB）"
     return max(big, key=lambda x: x[1]["total"])
 
 
-def check(cfg, key):
+def check(cfg, key, model="qwen"):
     """看一个运行库能不能用。能用返回 {"key", "backend", "device", "gpu", "label"}，不能用返回原因字符串。"""
     rt = models.RUNTIMES[key]
     if not installed(cfg, key):
@@ -164,7 +164,7 @@ def check(cfg, key):
         return {"key": key, "backend": "cpu", "device": None, "gpu": False, "label": rt["short"]}
     if d["gpu_error"]:
         return d["gpu_error"]
-    i, dev = _device(cfg, key, d["devices"])
+    i, dev = _device(cfg, key, d["devices"], models.MODELS[model].get("vram", MIN_VRAM_MB))
     if i is None:
         return dev
     return {"key": key, "backend": rt["backend"], "device": i, "gpu": True, "label": f"{rt['short']} · {_short(dev['desc'])}"}
@@ -181,7 +181,7 @@ def pick(cfg, failed=None, model="qwen"):
     if want != "auto":
         if want not in models.RUNTIMES:
             raise RuntimeError(f"设置里的运行库 {want} 已经不支持，请在设置里重新选择")
-        got = failed.get(want) or check(cfg, want)
+        got = failed.get(want) or check(cfg, want, model)
         if isinstance(got, dict):
             return got | {"notes": []}
         others = [label(k) for k in models.RUNTIMES if k != want and installed(cfg, k)]
@@ -196,7 +196,7 @@ def pick(cfg, failed=None, model="qwen"):
     for key in keys:
         if key in failed or not installed(cfg, key):
             continue
-        got = check(cfg, key)
+        got = check(cfg, key, model)
         if isinstance(got, dict):
             return got | {"notes": notes}
         notes.append(f"{label(key)} {got}")

@@ -45,6 +45,7 @@ assert runtime._device({"gpu_device": "auto"}, "cuda", big)[0] == 1
 assert runtime._device({"gpu_device": "0"}, "cuda", big) == (None, "显存不足（2 GB）")
 assert runtime._device({"gpu_device": "5"}, "cuda", big) == (None, "没有编号 5 的显卡")
 assert runtime._device({"gpu_device": "auto"}, "cuda", big[:1])[0] is None
+assert runtime._device({"gpu_device": "auto"}, "cuda", big[:1], 1500)[0] == 0  # 轻量模型要的显存少，2 GB 的卡也能用
 
 # ---------- 自动和手动模式 ----------
 fake = {
@@ -53,7 +54,7 @@ fake = {
     "vulkan": {"key": "vulkan", "backend": "vulkan", "device": 0, "gpu": True, "label": "Vulkan · RTX A6000"},
     "cpu": {"key": "cpu", "backend": "cpu", "device": None, "gpu": False, "label": "CPU"},
 }
-runtime.check = lambda cfg, key: fake.get(key, "没有安装")
+runtime.check = lambda cfg, key, model="qwen": fake.get(key, "没有安装")
 runtime.installed = lambda cfg, key: key in fake
 runtime.nvidia = lambda: {"name": "NVIDIA RTX A6000", "driver": "600.00"}
 runtime.has_avx2 = lambda: True
