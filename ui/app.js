@@ -1136,10 +1136,62 @@ function route() {
   if (v === 'progress') renderProgress();
   else if (v === 'review') renderReview();
   else if (v === 'history') renderHistory();
+  else if (v === 'downloads') renderDownloads();
   else if (v === 'settings') renderSettings();
   else if (v === 'setup') renderSetup();
   else if (v === 'terms') renderTerms();
   else renderNew();
+}
+
+/* 下载页：正在下的、暂停的、排队的和最近完成或失败的，每秒刷新 */
+async function renderDownloads() {
+  clearTimeout(S.dlpT);
+  if (location.hash !== '#downloads') return;
+  const st = await api().download_status();
+  const cur = st.current;
+  const L = (n) => esc(st.labels[n] || (cur && cur.name === n ? cur.label : n));
+  const items = [];
+  if (cur) {
+    const pct = cur.total ? Math.min(100, cur.done / cur.total * 100) : 0;
+    const state = st.paused ? '已暂停' : cur.note && cur.note.startsWith('正在') ? esc(cur.note) : `${(cur.speed / 1e6).toFixed(1)} MB/s`;
+    items.push(`<div class="dl-item">
+      <div class="top"><b>${esc(cur.label)}</b><span class="mono small">${Math.floor(pct)}%　${bytes(cur.done)} / ${bytes(cur.total)}</span>
+        <span class="sp">${st.paused ? '<button class="btn sm solid" type="button" id="dlresume">继续</button>' : '<button class="btn sm" type="button" id="dlpause">暂停</button>'}<button class="btn sm ghost" type="button" data-dlcancel="${cur.name}">取消</button></span></div>
+      <div class="bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
+      <div class="meta">${state}${cur.source ? '　来源：' + esc(cur.source) : ''}${cur.note && !cur.note.startsWith('正在') ? '<br>' + esc(cur.note) : ''}</div>
+    </div>`);
+  }
+  const queued = st.queue.filter((n) => !cur || n !== cur.name);
+  if (!cur && st.paused && queued.length) items.push(`<div class="top"><button class="btn sm solid" type="button" id="dlresume">继续下载</button></div>`);
+  if (queued.length) {
+    items.push(`<p class="dl-sec">排队中</p>` + queued.map((n) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="faint mono small">${bytes(st.sizes[n] || 0)}</span><span class="sp"><button class="btn sm ghost" type="button" data-dlcancel="${n}">取消</button></span></div></div>`).join(''));
+  }
+  const failed = Object.entries(st.failed);
+  if (failed.length) {
+    items.push(`<p class="dl-sec">没有完成</p>` + failed.map(([n, why]) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="sp"><button class="btn sm" type="button" data-dlretry="${n}">${why.includes('已取消') ? '接着下' : '重试'}</button></span></div><div class="meta${why.includes('已取消') ? '' : ' err'}">${esc(why)}</div></div>`).join(''));
+  }
+  if (st.done.length) {
+    items.push(`<p class="dl-sec">这次打开程序后下完的</p>` + [...st.done].reverse().map((n) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="faint small">已完成</span></div></div>`).join(''));
+  }
+  const busy = cur || st.queue.length;
+  view.innerHTML = items.length ? `
+  <header class="pagehead"><h1>下载</h1><span class="faint small">下载中途关掉程序也没关系，下次再下会从断点接着下。</span>
+    ${busy ? '<span class="sp"><button class="btn sm ghost" type="button" id="dlall">全部取消</button></span>' : ''}</header>
+  <div class="dl-list">${items.join('')}</div>`
+    : `<div class="empty"><h2>没有正在下载的内容</h2><p>模型在设置的「本地模型」里下载，语音识别运行库在安装引导里下载。开始下载后可以在这里查看进度、暂停或取消。</p><div class="acts"><a class="btn solid" href="#settings">打开设置</a><a class="btn" href="#setup">打开安装引导</a></div></div>`;
+  const again = () => { clearTimeout(S.dlpT); renderDownloads(); };
+  if ($('#dlpause')) $('#dlpause').onclick = async () => { await api().pause_download(); again(); };
+  if ($('#dlresume')) $('#dlresume').onclick = async () => { await api().resume_download(); again(); };
+  if ($('#dlall')) $('#dlall').onclick = async () => { await api().cancel_download(); again(); };
+  $$('[data-dlcancel]').forEach((b) => { b.onclick = async () => { await api().cancel_download(b.dataset.dlcancel); again(); }; });
+  $$('[data-dlretry]').forEach((b) => {
+    b.onclick = async () => {
+      const n = b.dataset.dlretry;
+      await api().download_model(n, n.startsWith('runtime_') ? (S.rsrc || 'official') : (S.src || 'hf'));
+      again();
+    };
+  });
+  S.dlpT = setTimeout(renderDownloads, busy && !st.paused ? 1000 : 3000);
 }
 
 /* 下载进度：设置页打开、并且有下载在进行时每秒刷新一次 */
@@ -1209,6 +1261,9 @@ async function poll() {
     const badge = $('#navpct');  // 不在进度页时，导航上也能看到进度
     badge.hidden = !(s.running && s.current);
     if (s.running && s.current) badge.textContent = s.current.agent ? '待粘贴' : Math.floor(s.current.pct) + '%';
+    const dl = $('#navdl');  // 有下载时导航上显示进度
+    dl.hidden = !s.download.active;
+    if (s.download.active) dl.textContent = s.download.paused ? '暂停' : Math.floor(s.download.pct) + '%';
     const waiting = s.current && s.current.agent ? s.current.agent.k : null;  // 不在进度页时提醒一次
     if (waiting && waiting !== S.agentSeen && location.hash !== '#progress') toast('需要把提示词复制给 Agent', { label: '去进度页', fn: () => { location.hash = '#progress'; } });
     S.agentSeen = waiting;

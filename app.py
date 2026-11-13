@@ -201,6 +201,10 @@ class Api:
         s["paused"] = self._queue.paused
         s["vram"] = self._gpu_memory() if s["running"] else None
         s["dropped"], self._dropped = self._dropped, []
+        d = self._downloads.state  # 导航上的下载进度
+        cur = d["current"]
+        s["download"] = {"active": bool(cur or self._downloads.queue), "paused": d["paused"],
+                         "pct": cur["done"] / cur["total"] * 100 if cur and cur["total"] else 0}
         return s
 
     def _gpu_memory(self):
@@ -433,8 +437,18 @@ class Api:
         """排队下载一个模型缺的文件。"""
         return self._downloads.add(name, source)
 
-    def cancel_download(self):
-        self._downloads.cancel()
+    def cancel_download(self, name=None):
+        """name 为空时全部取消，否则只取消这一项。"""
+        self._downloads.cancel(name)
+        return self._downloads.status()
+
+    def pause_download(self):
+        self._downloads.pause()
+        return self._downloads.status()
+
+    def resume_download(self):
+        self._downloads.resume()
+        return self._downloads.status()
 
     def download_status(self):
         return self._downloads.status()
