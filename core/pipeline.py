@@ -556,7 +556,9 @@ class Queue:
 
         cmd = self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
         out = f"out_{name}.json"
-        fp = _fingerprint(cmd, seg_file.read_text(encoding="utf-8"), _file_sizes(cmd))
+        # 带上抽音频那一步的指纹：源文件换了、切块碰巧一样时，也不能沿用旧的识别结果
+        audio_fp = (d / "audio.wav.key").read_text(encoding="utf-8")
+        fp = _fingerprint(cmd, seg_file.read_text(encoding="utf-8"), _file_sizes(cmd), audio_fp)
         if _reusable(d, out, fp):  # 上次已经跑完这一步
             t.reused.add(key)
             t.sim = None
