@@ -428,6 +428,7 @@ function progressLeft(s, c) {
         <dt>多模型对照</dt><dd>${on(c.compare)}</dd>
         <dt>AI 精度优化</dt><dd>${c.opt ? esc(proofName()) : '关闭'}</dd>
         <dt>区分说话人</dt><dd>${on(c.diarize)}</dd>
+        ${c.device ? `<dt>运行设备</dt><dd>${esc(c.device)}</dd>` : ''}
         ${s.vram ? `<dt>显存</dt><dd class="mono">${s.vram}</dd>` : ''}
       </dl>
       ${s.error ? `<p class="err">${esc(s.error)}</p>` : ''}
@@ -957,12 +958,16 @@ async function renderSettings() {
         </div>
       </section>
       <section class="sec" id="runtime">
-        <div><h2>运行环境</h2><p class="desc">所有模型都在显卡上运行。NVIDIA 显卡（驱动 580 以上）用 CUDA，其他显卡用 Vulkan。</p></div>
+        <div><h2>运行环境</h2><p class="desc">「自动」按显卡在已安装的运行库里挑：NVIDIA 显卡先试 CUDA 13、CUDA 12.6，其次 Vulkan；AMD、Intel 显卡用 Vulkan；都用不了时用 CPU。用不上显卡、显存不足时自动换下一个。手动指定的运行库用不了时，任务会停下并说明原因。</p></div>
         <div class="stack">
-          <div class="lab"><span>推理后端</span><div class="seg" role="group" aria-label="推理后端" style="align-self:flex-start">
-            <button type="button" class="${c.gpu_backend === 'cuda' ? 'on' : ''}" data-back="cuda">CUDA 13</button><button type="button" class="${c.gpu_backend === 'vulkan' ? 'on' : ''}" data-back="vulkan">Vulkan</button>
+          <div class="lab"><span>运行库</span><div class="seg" role="group" aria-label="运行库" style="align-self:flex-start;flex-wrap:wrap">
+            ${['auto', ...RT_KEYS].map((k) => `<button type="button" class="${c.gpu_backend === k ? 'on' : ''}" data-back="${k}">${k === 'auto' ? '自动' : RT_SHORT[k]}</button>`).join('')}
           </div></div>
-          <label class="lab"><span>运行库目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
+          ${(c.gpu_backend === 'auto' ? RT_KEYS.filter((k) => ok.runtimes[k]) : [c.gpu_backend]).map((k) => `<label class="lab"><span>${RT_SHORT[k]} 运行库目录${ok.runtimes[k] ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${k}" value="${esc(c['runtime_' + k])}"></label>`).join('')}
+          ${c.gpu_backend === 'auto' && !ok.runtime ? '<p class="err">一个运行库都没有安装。</p>' : ''}
+          <label class="lab"><span>显卡编号（有多块显卡时）</span><input class="field mono" data-cfg="gpu_device" value="${esc(String(c.gpu_device ?? 'auto'))}" style="width:120px" title="auto 表示选显存最大的一块；也可以填检测结果里的编号"></label>
+          <div><button class="btn sm" type="button" id="rtcheck">检测运行环境</button></div>
+          <div id="rtres" class="small"></div>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
           <div><a class="btn sm" href="#setup">打开安装引导，下载运行库</a></div>
           <p class="faint small">字幕对照组 ${esc(c.version)}</p>
@@ -987,6 +992,13 @@ async function renderSettings() {
   $$('[data-src]').forEach((s) => { s.onchange = () => { S.src = s.value; }; });
   watchDownloads();
   $$('[data-bk]').forEach((i) => { i.onchange = async () => { await api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); S.cfg = await api().config(); }; });
+  $('#rtcheck').onclick = async () => {
+    const box = $('#rtres');
+    box.textContent = '正在检测，每个运行库要几秒……';
+    const r = await api().runtime_check();
+    box.innerHTML = r.rows.map((x) => `<div><b>${esc(x.label)}</b>：${x.ok ? esc(x.state) : `<span class="faint">${esc(x.state)}</span>`}${x.devices && x.devices.length ? `<br><span class="faint mono">${x.devices.map(esc).join('<br>')}</span>` : ''}</div>`).join('')
+      + `<p style="margin-top:8px">按现在的设置会用：<b>${esc(r.chosen)}</b></p>`;
+  };
   $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); showSys(b.dataset.back); renderSettings(); }; });
   $$('[data-pm]').forEach((b) => { b.onclick = async () => { await api().save_config({ proof_mode: b.dataset.pm }); renderSettings(); }; });
   if (agentMode()) return;
@@ -1033,11 +1045,12 @@ async function renderSetup() {
   const info = S.setup = await api().setup_info();
   const srcs = await api().sources();
   const g = info.gpu;
-  if (!S.pick) S.pick = g && g.cuda_ok ? 'cuda' : (info.runtimes.find((r) => r.installed) || { key: 'vulkan' }).key;
-  const gpuText = g
-    ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda_ok ? '推荐用 CUDA。' : '驱动低于 580，用不了 CUDA 13：先到 NVIDIA 官网更新驱动，或者选 Vulkan。')
-    : '没有检测到 NVIDIA 显卡，推荐用 Vulkan。';
-  const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
+  if (!S.pick) S.pick = (info.runtimes.find((r) => r.installed && r.key === info.recommend) || info.runtimes.find((r) => r.installed) || { key: info.recommend }).key;
+  const gpuText = (g
+    ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda13 ? '推荐 CUDA 13。' : g.cuda12 ? '驱动低于 580，用不了 CUDA 13，推荐 CUDA 12.6。' : '驱动太老，CUDA 用不了：推荐 Vulkan，或者先到 NVIDIA 官网更新驱动。')
+    : '没有检测到 NVIDIA 显卡。AMD、Intel 显卡和核显用 Vulkan，没有显卡的电脑用 CPU' + (info.avx2 ? '' : '（这台电脑不支持 AVX2，用 CPU Legacy）') + '。')
+    + '运行时会自动检查选中的运行库能不能用上显卡，用不了时自动换另一个已安装的运行库。';
+  const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}${r.key === info.recommend ? '（推荐）' : ''}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
   const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono small" style="text-align:right">${m.installed ? '已安装' : bytes(m.size)}</span></div>`).join('');
   view.innerHTML = `
   <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\Tingxie。</span></header>
@@ -1065,8 +1078,8 @@ async function renderSetup() {
   $('#msrc').onchange = (e) => { S.src = e.target.value; };
   $('#setgo').onclick = async () => {
     if (setupReady()) { S.firstRun = true; S.mode = 'fast'; location.hash = '#new'; return; }
-    await api().save_config({ gpu_backend: S.pick });
-    showSys(S.pick);
+    await api().save_config({ gpu_backend: 'auto' });  // 下载哪个由用户选，跑的时候自动在已安装的里挑
+    showSys('auto');
     if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
     for (const m of S.setup.models) if (!m.installed) await api().download_model(m.name, $('#msrc').value);
     watchSetup();
@@ -1145,8 +1158,11 @@ async function watchDownloads() {
   if (cur || st.queue.length) S.dlT = setTimeout(watchDownloads, 1000);
 }
 
+const RT_KEYS = ['cuda', 'cuda12', 'vulkan', 'cpu', 'cpu_legacy'];
+const RT_SHORT = { cuda: 'CUDA 13', cuda12: 'CUDA 12.6', vulkan: 'Vulkan', cpu: 'CPU', cpu_legacy: 'CPU Legacy' };
+const RT_NAMES = { auto: '自动选择', cuda: 'GPU · CUDA 13', cuda12: 'GPU · CUDA 12.6', vulkan: 'GPU · Vulkan', cpu: 'CPU', cpu_legacy: 'CPU Legacy' };
 function showSys(backend) {
-  $('#sys').innerHTML = `${backend === 'cuda' ? 'GPU · CUDA 13' : 'GPU · Vulkan'}<br>字幕对照组 ${esc(S.cfg.version)}`;
+  $('#sys').innerHTML = `运行库：${esc(RT_NAMES[backend] || backend)}<br>字幕对照组 ${esc(S.cfg.version)}`;
 }
 
 async function poll() {
@@ -1178,7 +1194,8 @@ async function boot() {
   showSys(S.cfg.gpu_backend);
   window.addEventListener('hashchange', route);
   const si = await api().setup_info();  // 运行库或必装模型缺了，先进引导页
-  if (!si.runtimes.find((r) => r.key === si.backend).installed || !si.models.every((m) => m.installed)) location.hash = '#setup';
+  const rtOk = si.backend === 'auto' ? si.runtimes.some((r) => r.installed) : (si.runtimes.find((r) => r.key === si.backend) || {}).installed;
+  if (!rtOk || !si.models.every((m) => m.installed)) location.hash = '#setup';
   window.addEventListener('resize', () => { if (location.hash === '#review' && S.job) drawWave(); });
   route();
   poll();

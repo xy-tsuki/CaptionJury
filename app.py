@@ -15,7 +15,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, download, lines, models, pipeline, store, subtitles
+from core import deepseek, download, lines, models, pipeline, runtime, store, subtitles
 from core.version import VERSION
 
 # 打包成 exe 后，界面文件在 PyInstaller 解出的目录（sys._MEIPASS）里
@@ -444,25 +444,43 @@ class Api:
 
     def check_models(self):
         cfg = store.load_config()
-        runtime = Path(cfg["runtime_" + cfg["gpu_backend"]]) / "crispasr.exe"
-        return {name: models.installed(cfg, name) for name in models.MODELS} | {"runtime": runtime.exists()}
+        rts = {k: runtime.installed(cfg, k) for k in models.RUNTIMES}
+        want = cfg["gpu_backend"]
+        return {name: models.installed(cfg, name) for name in models.MODELS} | {
+            "runtime": any(rts.values()) if want == "auto" else rts.get(want, False), "runtimes": rts}
+
+    def runtime_check(self):
+        """设置页的「检测运行环境」：每个已安装的运行库能不能用、看到哪些显卡，以及自动模式会选哪个。"""
+        cfg = store.load_config()
+        rows = []
+        for k, r in models.RUNTIMES.items():
+            if not runtime.installed(cfg, k):
+                rows.append({"key": k, "label": r["short"], "state": "没有安装"})
+                continue
+            got = runtime.check(cfg, k)
+            devs = runtime.diagnose(runtime.exe(cfg, k))["devices"]
+            rows.append({"key": k, "label": r["short"], "state": got["label"] if isinstance(got, dict) else got,
+                         "ok": isinstance(got, dict),
+                         "devices": [f"{i}：{d['desc']}（{d['total'] / 1024:.0f} GB）" for i, d in enumerate(devs)]})
+        try:
+            chosen = runtime.describe(runtime.pick(cfg))
+        except RuntimeError as e:
+            chosen = str(e)
+        return {"rows": rows, "chosen": chosen}
 
     def setup_info(self):
-        """首次运行引导页要的信息：显卡、两种运行库、必装模型是否就绪。"""
+        """首次运行引导页要的信息：显卡、各个运行库、必装模型是否就绪。"""
         cfg = store.load_config()
-        gpu = None
-        try:
-            r = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
-                               capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
-            if r.returncode == 0 and r.stdout.strip():
-                name, driver = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")[:2]]
-                gpu = {"name": name, "driver": driver, "cuda_ok": float(driver.split(".")[0]) >= 580}
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
+        gpu = runtime.nvidia()
+        avx2 = runtime.has_avx2()
+        if gpu:
+            gpu["cuda13"] = runtime.driver_major(gpu) >= models.RUNTIMES["cuda"]["min_driver"]
+            gpu["cuda12"] = runtime.driver_major(gpu) >= models.RUNTIMES["cuda12"]["min_driver"]
         runtimes = [{"key": k, "label": r["label"], "desc": r["desc"], "size": r["file"]["size"],
-                     "installed": (Path(cfg["runtime_" + k]) / "crispasr.exe").is_file()} for k, r in models.RUNTIMES.items()]
+                     "installed": runtime.installed(cfg, k)} for k, r in models.RUNTIMES.items()]
         need = [m for m in models.MODELS if models.MODELS[m]["role"] == "main"]
-        return {"gpu": gpu, "backend": cfg["gpu_backend"], "runtimes": runtimes,
+        return {"gpu": gpu, "avx2": avx2, "recommend": runtime.recommend(gpu, avx2), "backend": cfg["gpu_backend"],
+                "runtimes": runtimes,
                 "models": [{"name": m, "label": models.MODELS[m]["label"], "size": models.size(m),
                             "installed": models.installed(cfg, m)} for m in need],
                 "ffmpeg": bool(shutil.which(cfg["ffmpeg"]) or Path(cfg["ffmpeg"]).is_file())}

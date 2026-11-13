@@ -20,9 +20,10 @@ RUNTIME_DIR = HOME / "runtime"
 BUNDLED_FFMPEG = Path(sys.executable).parent / "ffmpeg" / "ffmpeg.exe"
 
 DEFAULTS = {
-    "gpu_backend": "cuda",
-    "runtime_cuda": str(RUNTIME_DIR / "crispasr-cuda13"),
-    "runtime_vulkan": str(RUNTIME_DIR / "crispasr-vulkan"),
+    # auto 按显卡自动挑（core/runtime.py），也可以是 models.RUNTIMES 里的某一个；gpu_device 是 auto 或显卡编号
+    "gpu_backend": "auto",
+    "gpu_device": "auto",
+    **{"runtime_" + k: str(RUNTIME_DIR / r["dir"]) for k, r in models.RUNTIMES.items()},
     "ffmpeg": "ffmpeg",
     **models.default_paths(MODELS_DIR),
     "backups": models.DEFAULT_BACKUPS,
@@ -40,7 +41,8 @@ DEFAULTS = {
     "diarize": False,
     "formats": ["SRT", "ASS"],
     "line_max": "wide",  # 导出时每条字幕的字数：wide 横屏、tall 竖屏、full 不限（subtitles.LINE_MAX）
-    "speed": {},
+    "speed": {},  # 各步骤的速度统计，旧版只有一份（都在 GPU 上跑）
+    "speed_rt": {},  # 按运行库分开的速度统计：运行库 -> 同 speed
 }
 
 
@@ -60,6 +62,9 @@ def load_config():
         if "mode" not in saved and ("opt" in saved or "compare" in saved):  # 有模式之前的设置：按两个开关推出来
             opt, compare = saved.get("opt", True), saved.get("compare", saved.get("opt", True))
             saved["mode"] = "accurate" if opt and compare else "fast" if not opt and not compare else "custom"
+        # 有「自动」之前的设置：运行库是引导页按驱动版本替用户选的，改成自动；已有的运行库路径照旧保留
+        if "gpu_device" not in saved:
+            saved["gpu_backend"] = "auto"
         cfg.update(saved)
     # 去掉已经不支持的备用模型（Parakeet 在 2026-11-12 去掉了）；某种语言只勾了它的，改回默认
     backups = {}

@@ -12,7 +12,7 @@ import uuid
 import wave
 from pathlib import Path
 
-from . import chunks, deepseek, lines, models, progress, sentences, speakers, store, subtitles
+from . import chunks, deepseek, lines, models, progress, runtime, sentences, speakers, store, subtitles
 
 NO_WINDOW = 0x08000000
 PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -30,6 +30,14 @@ NAMES = {
 
 class Cancelled(Exception):
     pass
+
+
+class ProcFailed(RuntimeError):
+    """子进程非零退出；带上退出码和 stderr 最后几十行，用来判断是不是运行库或显卡的问题。"""
+
+    def __init__(self, msg, code, tail):
+        super().__init__(msg)
+        self.code, self.tail = code, tail
 
 
 class Skipped(Exception):
@@ -223,7 +231,10 @@ class Queue:
         if opt:
             keys.append("qwen2")
             keys.append("deepseek")
-        self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
+        self.job = job
+        self._pick_runtime(cfg, job)
+        rates = cfg.get("speed_rt", {}).get(self.rt["key"]) or (cfg["speed"] if self.rt["gpu"] else {})
+        self.tracker = progress.Tracker(keys, duration, self.state["current"], rates, self._clock)
         self.extras = []  # Qwen 没识别出、其他模型听到的段落；开了 AI 校对时校对前插进去交给 AI，否则最后插成存疑字幕
         for lane in self.state["current"]["lanes"]:
             lane["name"] = NAMES[lane["key"]]
@@ -299,7 +310,8 @@ class Queue:
         if moved:
             job["warnings"].append(f"源文件所在的文件夹没有写入权限，字幕存到了 {Path(moved[0]).parent}")
         store.save_job(job)
-        store.save_config({"speed": self.tracker.rates})
+        if self.rt["key"] == self.rt_first:  # 中途换过运行库时速度混在一起，不记
+            store.save_config({"speed_rt": cfg.get("speed_rt", {}) | {self.rt["key"]: self.tracker.rates}})
         return job
 
     def _extract(self, cfg, src, d, job):
@@ -337,9 +349,45 @@ class Queue:
         self.state["current"]["duration"] = job["duration"]
         t.finish("extract")
 
+    def _pick_runtime(self, cfg, job, failed=None):
+        """选运行库和显卡（runtime.pick），把实际设备写进任务状态和任务文件。"""
+        self.rt = runtime.pick(cfg, failed)
+        self.rt_failed = dict(failed or {})
+        if failed is None:
+            self.rt_first = self.rt["key"]
+        job["device"] = self.state["current"]["device"] = runtime.describe(self.rt)
+        job["runtime"] = self.rt["key"]
+
     def _base(self, cfg):
-        runtime = Path(cfg["runtime_" + cfg["gpu_backend"]])
-        return [str(runtime / "crispasr.exe"), "--gpu-backend", cfg["gpu_backend"]]
+        rt = self.rt
+        cmd = [str(runtime.exe(cfg, rt["key"])), "--gpu-backend", rt["backend"]]
+        if rt["device"] is not None:
+            cmd += ["-dev", str(rt["device"])]
+        if not rt["gpu"]:
+            cmd += ["-t", str(runtime.threads())]
+        return cmd
+
+    def _crispasr(self, cfg, args, cwd, on_err=None):
+        """运行一次 crispasr（命令开头的运行库部分由这里加）。
+
+        自动模式下，运行库或显卡出问题（初始化失败、显存不足、程序起不来）时换下一个运行库，从头重跑这一步。
+        """
+        while True:
+            try:
+                return self._spawn(self._base(cfg) + args, cwd, on_err)
+            except ProcFailed as e:
+                why = runtime.failure(e.code, e.tail)
+                if not why or cfg.get("gpu_backend", "auto") != "auto":
+                    if why:
+                        raise RuntimeError(f"{e}。{self.rt['label']} {why}，可以在设置里把运行库改成「自动」") from e
+                    raise
+                bad = self.rt["key"]
+                failed = self.rt_failed | {bad: why}
+                try:
+                    self._pick_runtime(cfg, self.job, failed)
+                except RuntimeError:
+                    raise RuntimeError(f"{e}。已经没有可换的运行库（" + "；".join(f"{runtime.label(k)} {v}" for k, v in failed.items()) + "）") from e
+                self.state["current"].setdefault("warnings", []).append(f"{runtime.label(bad)} {why}，改用 {self.rt['label']} 重跑")
 
     def _model_args(self, cfg, key):
         return models.args(cfg, "qwen" if key == "qwen2" else key)
@@ -368,17 +416,17 @@ class Queue:
         self.proc = None
         self._check()
         if p.returncode:
-            raise RuntimeError(f"{what}（{p.returncode}）：" + " / ".join(x for x in tail[-3:] if x)[:400])
+            raise ProcFailed(f"{what}（{p.returncode}）：" + " / ".join(x for x in tail[-3:] if x)[:400], p.returncode, list(tail))
 
     def _segment(self, cfg, d):
         t = self.tracker
         t.set("vad", 1)
         t.creep("vad", 97, t.predicted("vad"))  # CrispASR reports nothing during detection, so this bar is estimated
         # 人声检测只用 CrispASR 自带的 webrtc，和加载哪个模型无关
-        cmd = self._base(cfg) + self._model_args(cfg, "qwen") + [
+        args = self._model_args(cfg, "qwen") + [
             "-f", "audio.wav", "--vad", "-vm", "webrtc", "-vsd", "300", "-vmsd", "28", "--strict-pipeline", "--vad-export", "seg.json",
         ]
-        self._spawn(cmd, d)
+        self._crispasr(cfg, args, d)
         data = json.loads((d / "seg.json").read_text(encoding="utf-8"))
         v = data["crispasr_vad"]
         self.seg_doc = data
@@ -428,10 +476,10 @@ class Queue:
                 if n < len(lengths):
                     t.creep(key, at(n + 1), lengths[n] * rate)
 
-        cmd = self._base(cfg) + self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
-        self._spawn(cmd, d, line)
-        if not on_gpu[0]:
-            self.state["current"].setdefault("warnings", []).append(f"{NAMES[key]} 没有用上 GPU")
+        cmd = self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
+        self._crispasr(cfg, cmd, d, line)
+        if self.rt["gpu"] and not on_gpu[0]:
+            self.state["current"].setdefault("warnings", []).append(f"{NAMES[key]} 没有用上 {self.rt['label']}，实际在 CPU 上运行")
         return json.loads((d / f"out_{name}.json").read_text(encoding="utf-8"))["transcription"]
 
     def _moss(self, cfg, d, slices, lang, job):

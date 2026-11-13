@@ -6,7 +6,7 @@ from pathlib import Path
 
 from core import models, store
 
-KEYS = ["runtime_cuda", "runtime_vulkan", "gpu_backend", "ffmpeg", "backups"] + [k for m in models.MODELS.values() for k in m["files"]]
+KEYS = ["runtime_" + k for k in models.RUNTIMES] + ["gpu_backend", "gpu_device", "ffmpeg", "backups"] + [k for m in models.MODELS.values() for k in m["files"]]
 
 
 def use():
