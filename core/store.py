@@ -42,7 +42,8 @@ DEFAULTS = {
     "formats": ["SRT", "ASS"],
     "line_max": "wide",  # 导出时每条字幕的字数：wide 横屏、tall 竖屏、full 不限（subtitles.LINE_MAX）
     "speed": {},  # 各步骤的速度统计，旧版只有一份（都在 GPU 上跑）
-    "speed_rt": {},  # 按运行库分开的速度统计：运行库 -> 同 speed
+    "speed_rt": {},
+    "bench": {},  # 本机测速结果（core/bench.py），自动模式把实测最快的运行库排第一  # 按运行库分开的速度统计：运行库 -> 同 speed
 }
 
 

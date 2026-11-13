@@ -170,7 +170,7 @@ def check(cfg, key):
     return {"key": key, "backend": rt["backend"], "device": i, "gpu": True, "label": f"{rt['short']} · {_short(dev['desc'])}"}
 
 
-def pick(cfg, failed=None):
+def pick(cfg, failed=None, model="qwen"):
     """选这次任务用的运行库。failed 是这次任务里已经失败的 {运行库: 原因}，不再选它们。
 
     返回的字典比 check 多一个 "notes"：自动模式下跳过的候选和原因，例如 ["CUDA 13 初始化失败"]。
@@ -188,7 +188,12 @@ def pick(cfg, failed=None):
         hint = "可以在设置里改成「自动」" + (f"，或者换成已安装的 {'、'.join(others)}" if others else "，或者在安装引导里下载其他运行库")
         raise RuntimeError(f"{label(want)} 用不了：{got}。{hint}")
     notes = [f"{label(k)} {why}" for k, why in failed.items()]
-    for key in order(nvidia(), has_avx2()):
+    keys = order(nvidia(), has_avx2())
+    from . import bench  # bench 也要用本模块，放这里避免循环导入
+    best = bench.fastest(cfg, model)
+    if best in keys:  # 本机测过速：实测最快的排第一，其余照旧
+        keys = [best] + [k for k in keys if k != best]
+    for key in keys:
         if key in failed or not installed(cfg, key):
             continue
         got = check(cfg, key)

@@ -966,8 +966,9 @@ async function renderSettings() {
           ${(c.gpu_backend === 'auto' ? RT_KEYS.filter((k) => ok.runtimes[k]) : [c.gpu_backend]).map((k) => `<label class="lab"><span>${RT_SHORT[k]} 运行库目录${ok.runtimes[k] ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${k}" value="${esc(c['runtime_' + k])}"></label>`).join('')}
           ${c.gpu_backend === 'auto' && !ok.runtime ? '<p class="err">一个运行库都没有安装。</p>' : ''}
           <label class="lab"><span>显卡编号（有多块显卡时）</span><input class="field mono" data-cfg="gpu_device" value="${esc(String(c.gpu_device ?? 'auto'))}" style="width:120px" title="auto 表示选显存最大的一块；也可以填检测结果里的编号"></label>
-          <div><button class="btn sm" type="button" id="rtcheck">检测运行环境</button></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn sm" type="button" id="rtcheck">检测运行环境</button><button class="btn sm" type="button" id="bench">测试并选择最快后端</button></div>
           <div id="rtres" class="small"></div>
+          <div id="benchres" class="small"></div>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
           <div><a class="btn sm" href="#setup">打开安装引导，下载运行库</a></div>
           <p class="faint small">字幕对照组 ${esc(c.version)}</p>
@@ -992,6 +993,12 @@ async function renderSettings() {
   $$('[data-src]').forEach((s) => { s.onchange = () => { S.src = s.value; }; });
   watchDownloads();
   $$('[data-bk]').forEach((i) => { i.onchange = async () => { await api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); S.cfg = await api().config(); }; });
+  $('#bench').onclick = async () => {
+    const r = await api().bench_start();
+    if (r.error) return toast(r.error);
+    watchBench();
+  };
+  watchBench();
   $('#rtcheck').onclick = async () => {
     const box = $('#rtres');
     box.textContent = '正在检测，每个运行库要几秒……';
@@ -1156,6 +1163,29 @@ async function watchDownloads() {
   });
   if (st.done.some((n) => $(`[data-get="${n}"]`))) return renderSettings();  // 下好了：重新检查文件
   if (cur || st.queue.length) S.dlT = setTimeout(watchDownloads, 1000);
+}
+
+/* 设置页的测速结果：测速时每秒刷新 */
+async function watchBench() {
+  clearTimeout(S.benchT);
+  const box = $('#benchres');
+  if (!box) return;
+  const st = await api().bench_status();
+  const res = st.running || st.error ? st.results : (st.saved || {}).results || {};
+  const best = st.running ? null : st.fastest || (st.saved || {}).fastest;
+  const rows = Object.entries(res).map(([k, r]) => `<div>${k === best ? '<b>' : ''}${esc(RT_SHORT[k] || k)}：${r.error
+    ? `<span class="faint">${esc(r.error)}</span>`
+    : `常规 ${r.warm} 秒，第一次 ${r.first} 秒${k === best ? '（最快）' : ''}`}${k === best ? '</b>' : ''}</div>`).join('');
+  let head = '';
+  if (st.running) head = `<p>正在测速：${esc(st.note)}。用最近一个任务里的 30 秒音频，每个运行库跑 3 次。</p>`;
+  else if (st.error) head = `<p class="err">${esc(st.error)}</p>`;
+  else if (st.saved) head = st.valid
+    ? '<p>上次测速结果（自动模式会优先用最快的那个）：</p>'
+    : '<p class="faint">上次测速后显卡驱动、运行库或模型有变化，结果已作废，可以重新测一次：</p>';
+  box.innerHTML = head + rows;
+  const btn = $('#bench');
+  if (btn) btn.disabled = !!st.running;
+  if (st.running) S.benchT = setTimeout(watchBench, 1000);
 }
 
 const RT_KEYS = ['cuda', 'cuda12', 'vulkan', 'cpu', 'cpu_legacy'];

@@ -15,7 +15,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, download, lines, models, pipeline, runtime, store, subtitles
+from core import bench, deepseek, download, lines, models, pipeline, runtime, store, subtitles
 from core.version import VERSION
 
 # 打包成 exe 后，界面文件在 PyInstaller 解出的目录（sys._MEIPASS）里
@@ -82,6 +82,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Api:
     def __init__(self):
         self._queue = pipeline.Queue()
+        self._bench = bench.Bench()
         self._dropped = []
         self._vram = (0.0, None)
         self._window = None
@@ -113,6 +114,8 @@ class Api:
     # ---------- queue ----------
     def start(self, paths, lang, opt, formats, diarize=False, compare=False, terms="", mode="custom"):
         cfg = store.load_config()
+        if self._bench.state["running"]:
+            return {"error": "正在测速，结束后再开始转写"}
         if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
         if diarize and not Path(store.load_config()["moss_model"]).exists():
@@ -467,6 +470,20 @@ class Api:
         except RuntimeError as e:
             chosen = str(e)
         return {"rows": rows, "chosen": chosen}
+
+    def bench_start(self, model="qwen"):
+        """设置页的「测试并选择最快后端」。转写时不能测，两边会抢显卡。"""
+        if self._queue.state["running"]:
+            return {"error": "有任务正在转写，结束后再测速"}
+        return self._bench.start(model)
+
+    def bench_status(self):
+        s = self._bench.status()
+        cfg = store.load_config()
+        b = cfg.get("bench") or {}
+        s["saved"] = b if b else None
+        s["valid"] = bool(b) and bench.fastest(cfg, b.get("model", "qwen")) is not None
+        return s
 
     def setup_info(self):
         """首次运行引导页要的信息：显卡、各个运行库、必装模型是否就绪。"""
