@@ -21,7 +21,7 @@
 ## 系统要求
 
 - Windows 10 / 11，64 位。
-- 独立显卡：NVIDIA 显卡用 CUDA 版运行库（显卡驱动 580 以上），AMD、Intel 或较老的 NVIDIA 显卡用 Vulkan 版。
+- 最好有独立显卡：NVIDIA 显卡用 CUDA 版运行库（驱动 580 以上用 CUDA 13，528 以上用 CUDA 12.6），AMD、Intel 显卡和核显用 Vulkan 版。没有可用显卡时可以用 CPU 版，但慢很多。程序默认自动在已安装的运行库里挑能用上显卡的那个，用不了时自动换下一个，进度页会显示实际用的设备。
 - 硬盘：必装部分约 4 GB；备用模型和说话人模型另算（MiMo 4.9 GB，Whisper、MOSS 各约 1.1 GB）。
 - 作者在 RTX 3060 Laptop（12 GB 显存）上测试，运行时占用约 6 GB 显存。
 
@@ -29,7 +29,7 @@
 
 1. 在 [Releases](https://github.com/xy-tsuki/CaptionJury/releases) 下载 `CaptionJury-Setup-<版本>.exe`，双击安装。可以只为自己安装（不需要管理员权限），也可以为所有用户安装。
 2. 安装包没有代码签名，Windows 可能提示"未知发布者"或被 SmartScreen（Windows 的下载安全检查）拦截，点"更多信息" → "仍要运行"。
-3. 第一次打开会进入引导页：程序检测显卡，推荐 CUDA 或 Vulkan 运行库，然后下载运行库和两个必装模型。模型有三个下载来源（Hugging Face、hf-mirror 镜像、本项目 GitHub 备份），失败会自动换源，中断后可以续传。
+3. 第一次打开会进入引导页：程序检测显卡，推荐合适的运行库（CUDA 13、CUDA 12.6、Vulkan 或 CPU），然后下载运行库和两个必装模型。模型有三个下载来源（Hugging Face、hf-mirror 镜像、本项目 GitHub 备份），失败会自动换源，中断后可以续传。
 
 ## 使用
 

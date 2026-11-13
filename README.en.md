@@ -21,7 +21,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 ## Requirements
 
 - Windows 10 / 11, 64-bit.
-- A dedicated GPU: NVIDIA cards use the CUDA runtime (driver 580 or newer); AMD, Intel and older NVIDIA cards use the Vulkan runtime.
+- A dedicated GPU is recommended: NVIDIA cards use a CUDA runtime (CUDA 13 with driver 580 or newer, CUDA 12.6 with driver 528 or newer); AMD, Intel and integrated GPUs use the Vulkan runtime. Without a usable GPU there is a CPU runtime, which is much slower. By default the app picks an installed runtime that can actually use the GPU, moves on to the next one if it fails, and shows the device in use on the progress page.
 - Disk: about 4 GB for the required parts; backup and speaker models are extra (MiMo 4.9 GB; Whisper and MOSS about 1.1 GB each).
 - Tested on an RTX 3060 Laptop GPU (12 GB VRAM); it uses about 6 GB of VRAM while running.
 
@@ -29,7 +29,7 @@ A Windows desktop tool that turns video or audio with mixed Chinese and Japanese
 
 1. Download `CaptionJury-Setup-<version>.exe` from [Releases](https://github.com/xy-tsuki/CaptionJury/releases) and run it. You can install for yourself only (no administrator rights needed) or for all users.
 2. The installer is not code-signed, so Windows may warn about an "unknown publisher" or SmartScreen may block it. Click "More info" → "Run anyway".
-3. On first launch a setup page detects your GPU, recommends the CUDA or Vulkan runtime, and downloads the runtime and the two required models. Models have three download sources (Hugging Face, the hf-mirror mirror, and this project's GitHub backup); it switches source on failure and resumes interrupted downloads.
+3. On first launch a setup page detects your GPU, recommends a runtime (CUDA 13, CUDA 12.6, Vulkan or CPU), and downloads the runtime and the two required models. Models have three download sources (Hugging Face, the hf-mirror mirror, and this project's GitHub backup); it switches source on failure and resumes interrupted downloads.
 
 ## Usage
 
