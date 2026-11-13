@@ -100,6 +100,8 @@ class Api:
         ffprobe = str(Path(cfg["ffmpeg"]).with_name("ffprobe"))
         out = []
         for p in paths:
+            if not os.path.isfile(p):  # 源文件被移走或删掉了
+                continue
             r = subprocess.run(
                 [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p],
                 capture_output=True, creationflags=NO_WINDOW,
@@ -123,6 +125,28 @@ class Api:
         store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize, "mode": mode})
         try:
             self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms))
+        except RuntimeError as e:
+            return {"error": str(e)}
+        return {}
+
+    def resume_job(self, jid):
+        """历史页的「继续转写」：沿用这个任务目录里跑完的步骤，从没跑完的那一步开始；后面排着的文件接着转。"""
+        if self._queue.state["running"]:
+            return {"error": "已有任务正在运行，结束后再继续"}
+        if self._bench.state["running"]:
+            return {"error": "正在测速，结束后再继续"}
+        job = store.load_job(jid)
+        p = job.get("params")
+        if not p or "written" in job:
+            return {"error": "这个任务不能接着跑（旧版本建的或已经做完），可以点「重新转写」"}
+        if not Path(job["source"]).is_file():
+            return {"error": f"找不到源文件：{job['source']}"}
+        cfg = store.load_config()
+        if p["opt"] and cfg.get("proof_mode") != "agent" and not store.has_key():
+            return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存"}
+        files = [job["source"]] + [f for f in p.get("rest", []) if Path(f).is_file()]
+        try:
+            self._queue.start(files, p["lang"], p["opt"], p["formats"], p["diarize"], p["compare"], p["terms"], resume=jid)
         except RuntimeError as e:
             return {"error": str(e)}
         return {}

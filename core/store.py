@@ -156,6 +156,9 @@ def list_jobs():
             "count": len(segs), "fix": sum(s.get("status") == "fix" for s in segs),
             "ask": sum(s.get("status") == "ask" for s in segs),
             "done": "written" in j, "written": j.get("written", []),
+            # 没做完的任务：running（跑着或程序被关掉）、stopped（用户取消）、failed（出错）；有 params 的才能接着跑
+            "state": j.get("state", "done" if "written" in j else "failed"), "error": j.get("error", ""),
+            "params": j.get("params"), "diarize": bool(j.get("speakers")) or bool((j.get("params") or {}).get("diarize")),
         })
     return sorted(out, key=lambda x: x["created"], reverse=True)
 

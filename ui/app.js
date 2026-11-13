@@ -871,8 +871,11 @@ function drawHistory() {
   const chips = (j) => [LANGS[j.lang], j.compare && '对照', j.opt && 'AI 优化', j.speakers && '说话人'].filter(Boolean).map((t) => `<span class="chip">${t}</span>`).join('');
   const acts = (j) => {
     if (j.id === live) return '<span class="undone">正在转写</span>';
-    const usable = j.count > 0;
-    return `${usable ? `<button class="btn sm" type="button" data-open="${j.id}">打开校对</button>${exportMenu(j.id)}` : ''}
+    const usable = j.done && j.count > 0 || !j.params && j.count > 0;  // 没做完、能接着跑的不打开校对，免得改了又被覆盖
+    const resumable = !j.done && j.params;
+    return `${resumable ? `<button class="btn sm solid" type="button" data-resume="${j.id}" title="已经跑完的模型不重跑，从停下的那一步开始">继续转写</button>` : ''}
+      ${usable ? `<button class="btn sm" type="button" data-open="${j.id}">打开校对</button>${exportMenu(j.id)}` : ''}
+      <button class="btn sm ghost" type="button" data-again="${j.id}" title="用同一个源文件重新转写，可以先改设置">重新转写</button>
       <button class="btn sm ghost" type="button" data-reveal="${esc(j.source)}" title="在资源管理器里显示源文件" aria-label="打开源文件所在文件夹">${I.folder}</button>
       <button class="btn sm ghost danger" type="button" data-del="${j.id}" title="删除这条记录" aria-label="删除这条记录">${I.trash}</button>`;
   };
@@ -882,12 +885,34 @@ function drawHistory() {
       <span class="h-when mono small dim">${when(j.created)}</span>
       <span class="h-dur mono small dim">${hms(j.duration)}</span>
       <div class="h-chips">${chips(j)}</div>
-      <div class="h-count">${j.done || j.id === live ? `<span>${j.count} 条</span>` : '<span class="undone">没有做完</span>'}${j.ask ? `<span class="a st-ask"><i class="dot"></i>存疑 ${j.ask}</span>` : ''}${j.fix ? `<span class="f st-fix"><i class="dot"></i>已修正 ${j.fix}</span>` : ''}</div>
+      <div class="h-count">${j.done || j.id === live ? `<span>${j.count} 条</span>` : `<span class="undone" title="${esc(j.error || '')}">${{ stopped: '已取消，没有做完', failed: '出错，没有做完', running: '中途被关掉，没有做完' }[j.state] || '没有做完'}</span>`}${j.ask ? `<span class="a st-ask"><i class="dot"></i>存疑 ${j.ask}</span>` : ''}${j.fix ? `<span class="f st-fix"><i class="dot"></i>已修正 ${j.fix}</span>` : ''}</div>
       <div class="h-acts">${acts(j)}</div>
     </div>`).join('')
     + (rows.length ? '' : '<p class="none-hit" style="padding:28px 32px">没有文件名包含这个词的记录。</p>');
   $$('[data-open]').forEach((b) => { b.onclick = async () => { await openJob(b.dataset.open); S.flt = 'all'; location.hash = '#review'; }; });
   $$('[data-reveal]').forEach((b) => { b.onclick = async () => { const r = await api().reveal(b.dataset.reveal); if (r && r.error) toast(r.error); }; });
+  $$('[data-resume]').forEach((b) => {
+    b.onclick = async () => {
+      const r = await api().resume_job(b.dataset.resume);
+      if (r.error) return toast(r.error);
+      location.hash = '#progress';
+    };
+  });
+  // 重新转写：把源文件放进新建页的队列，带上这个任务当时的设置，用户可以改了再开始
+  $$('[data-again]').forEach((b) => {
+    b.onclick = async () => {
+      const j = S.history.find((x) => x.id === b.dataset.again);
+      const got = await api().probe([j.source]);
+      if (!got.length) return toast('找不到源文件：' + j.source);
+      const p = j.params || { lang: j.lang, opt: j.opt, compare: j.compare, diarize: j.diarize };
+      S.lang = p.lang || S.lang; S.opt = !!p.opt; S.compare = !!p.compare; S.dia = !!p.diarize;
+      if (p.formats) S.formats = p.formats;
+      S.mode = S.opt && S.compare ? 'accurate' : !S.opt && !S.compare ? 'fast' : 'custom';
+      S.files = got;
+      location.hash = '#new';
+      toast('已放进新建页，确认设置后点开始');
+    };
+  });
   // 删除要点两次：第一次按钮变红提示，4 秒内再点才删
   $$('[data-del]').forEach((b) => {
     b.onclick = async () => {
@@ -1287,6 +1312,8 @@ async function boot() {
   const rtOk = si.backend === 'auto' ? si.runtimes.some((r) => r.installed) : (si.runtimes.find((r) => r.key === si.backend) || {}).installed;
   if (!rtOk || !si.models.every((m) => m.installed)) location.hash = '#setup';
   window.addEventListener('resize', () => { if (location.hash === '#review' && S.job) drawWave(); });
+  const left = (await api().jobs()).filter((j) => !j.done && j.params);  // 上次没转写完的，提醒一次
+  if (left.length && location.hash !== '#setup') toast(`有 ${left.length} 个任务上次没有转写完，可以在历史里继续`, { label: '去历史', fn: () => { location.hash = '#history'; } });
   route();
   poll();
 }

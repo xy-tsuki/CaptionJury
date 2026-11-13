@@ -14,6 +14,7 @@ class Tracker:
         self.t0 = clock()
         self.started = {}
         self.sim = None
+        self.reused = set()  # 断点续跑时沿用上次结果的步骤：显示“沿用上次结果”，不拿来估算速度
         guess = duration * SPEECH_GUESS
         self.audio = {
             "extract": duration, "vad": duration, "qwen": guess, "qwen2": guess, "deepseek": guess, "moss": guess * 2,
@@ -49,6 +50,9 @@ class Tracker:
         self._refresh()
 
     def finish(self, key, label="完成", learn=True):
+        if key in self.reused:
+            learn = False
+            label = "沿用上次结果" if label == "完成" else label
         self.sim = None
         lane = self._lane(key)
         lane["pct"], lane["state"] = 100, label
