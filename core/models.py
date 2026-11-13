@@ -15,13 +15,21 @@ def _f(path, repo, size, sha256):
 
 
 # role："main" 必装；"diarize" 只在区分说话人时需要；"backup" 是用户按语言勾选的备用模型，
-# 多出一份识别结果给 DeepSeek 投票。
+# 多出一份识别结果给 DeepSeek 投票；"light" 是轻量模式换用的小主模型。
+# vram：大约要多少显存（MiB，含对齐模型），runtime 选显卡时按它筛。
 MODELS = {
     "qwen": {
         "label": "Qwen3-ASR 1.7B", "role": "main",
         "files": {"qwen_model": _f(r"Qwen3-ASR-1.7B\qwen3-asr-1.7b-q8_0.gguf", "cstr/qwen3-asr-1.7b-GGUF", 2506723200,
                                  "9851ab996591a2d0cb0efb216002764b509c86bd40c95e613d7b65b8e69c8a6e")},
-        "desc": "主识别模型，中日混说都能听，带标点。",
+        "desc": "主识别模型，中日混说都能听，带标点。", "vram": 4000,
+    },
+    "qwen06": {
+        "label": "Qwen3-ASR 0.6B（轻量）", "role": "light",
+        # 不进 GitHub 备份 models-v1（备份发布之后才加），只有 Hugging Face 和 hf-mirror 两个来源
+        "files": {"qwen06_model": _f(r"Qwen3-ASR-0.6B\qwen3-asr-0.6b-q4_k.gguf", "cstr/qwen3-asr-0.6b-GGUF", 631026336,
+                                   "f63771c02dfa486d9399d41ab6ab8cd2d8ca24e077cd32130ea1f67f4fd8dade")},
+        "desc": "轻量模式用的小模型，内存和显存不够、或者只想快点出个草稿时用。比 1.7B 快，错字多一些。", "vram": 2000,
     },
     "aligner": {
         "label": "Qwen3 强制对齐", "role": "main",
@@ -64,19 +72,38 @@ SOURCES = {
 }
 
 
-# CrispASR 运行库：从官方 GitHub Release 下载 zip，解压到数据目录。key 和设置里的 gpu_backend 一致。
+# CrispASR 运行库：从官方 GitHub Release 下载 zip，解压到数据目录。key 和设置里的 gpu_backend 一致（另有 "auto"）。
+# backend 是传给 --gpu-backend 的值；min_driver 是 NVIDIA 驱动主版本下限，只用来在自动模式里筛候选（runtime.order）。
+# CUDA 12.6 按 CUDA 12 的小版本兼容，驱动 528 以上就能用；CUDA 13 要 580 以上。
 CRISPASR_RELEASE = "https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.50/"
+
+
+def _rt(label, short, dir_, desc, gpu, backend, path, size, sha256, min_driver=0):
+    return {"label": "CrispASR 0.8.50 · " + label, "short": short, "dir": dir_, "desc": desc, "gpu": gpu,
+            "backend": backend, "min_driver": min_driver, "file": {"path": path, "size": size, "sha256": sha256}}
+
+
 RUNTIMES = {
-    "cuda": {"label": "CrispASR 0.8.50 · CUDA 13", "dir": "crispasr-cuda13",
-             "desc": "NVIDIA 显卡用，速度最快。需要 580 以上版本的显卡驱动。",
-             "file": {"path": "crispasr-windows-x86_64-cuda13.zip", "size": 569609379,
-                      "sha256": "f26ded177372f584f87f2644340d94ece7346ce7b7b8bc4c068a09333bd6b120"}},
-    "vulkan": {"label": "CrispASR 0.8.50 · Vulkan", "dir": "crispasr-vulkan",
-               "desc": "AMD、Intel 和较老的 NVIDIA 显卡用，比 CUDA 慢一些。",
-               "file": {"path": "crispasr-windows-x86_64-vulkan.zip", "size": 37063304,
-                        "sha256": "ac6fbfd527d782d7b999a135721dd131d76b18016283256c842b8f12411b1978"}},
+    "cuda": _rt("CUDA 13", "CUDA 13", "crispasr-cuda13", "NVIDIA 显卡用，速度最快。需要 580 以上版本的显卡驱动。", True, "cuda",
+                "crispasr-windows-x86_64-cuda13.zip", 569609379, "f26ded177372f584f87f2644340d94ece7346ce7b7b8bc4c068a09333bd6b120", 580),
+    "cuda12": _rt("CUDA 12.6", "CUDA 12.6", "crispasr-cuda126", "较老驱动（528 以上）的 NVIDIA 显卡用，速度和 CUDA 13 相近。", True, "cuda",
+                  "crispasr-windows-x86_64-cuda126.zip", 714189192, "51f3a55831fcc021eb4b7cfc096d1c876d0fd6b2c6ee8242072e3bec5ab15e34", 528),
+    "vulkan": _rt("Vulkan", "Vulkan", "crispasr-vulkan", "AMD、Intel 显卡和核显用，NVIDIA 显卡也能用，比 CUDA 慢一些。", True, "vulkan",
+                  "crispasr-windows-x86_64-vulkan.zip", 37063304, "ac6fbfd527d782d7b999a135721dd131d76b18016283256c842b8f12411b1978"),
+    "cpu": _rt("CPU", "CPU", "crispasr-cpu", "没有可用显卡时用，比显卡慢很多。需要支持 AVX2 的 CPU（2013 年以后的大多数电脑）。", False, "cpu",
+               "crispasr-windows-x86_64-cpu.zip", 9417729, "03565a3c60249ead81b6934f719af3ef09f48d28121d4231490db1c43522c53e"),
+    "cpu_legacy": _rt("CPU Legacy", "CPU Legacy", "crispasr-cpu-legacy", "不支持 AVX2 的老电脑用，最慢。", False, "cpu",
+                      "crispasr-windows-x86_64-cpu-legacy.zip", 8836447, "4f5d6ef087a6bd6ba5d88fcecb4485320a88c7b762aee1a4b856350484f39ba7"),
 }
-RUNTIME_SOURCE = "CrispASR 官方 GitHub"
+# 运行库的下载来源：官方 GitHub，以及几个 GitHub 加速镜像（第三方服务，中国大陆下载快）。
+# 镜像只是转发官方文件，下完一样按 SHA-256 校验，内容对不上就删掉重下，不会装上被改过的文件。
+RUNTIME_SOURCES = {
+    "official": "CrispASR 官方 GitHub",
+    "ghfast": "ghfast.top 加速镜像（中国大陆）",
+    "ghproxy": "gh-proxy.com 加速镜像（中国大陆）",
+    "ghproxynet": "ghproxy.net 加速镜像（中国大陆）",
+}
+GH_PROXIES = {"ghfast": "https://ghfast.top/", "ghproxy": "https://gh-proxy.com/", "ghproxynet": "https://ghproxy.net/"}
 for _r in RUNTIMES.values():
     _r["file"]["url"] = CRISPASR_RELEASE + _r["file"]["path"]
 
@@ -92,8 +119,8 @@ def installed(cfg, name):
 
 def urls(f, source):
     """从某个来源下载一个文件要用的 URL，按顺序排列（只有 GitHub 分卷时才有多个）。"""
-    if "url" in f:  # 运行库只有官方一个来源
-        return [f["url"]]
+    if "url" in f:  # 运行库：官方地址，或者加速镜像前缀加官方地址
+        return [f["url"]] if source == "official" else [GH_PROXIES[source] + f["url"]]
     name = Path(f["path"]).name
     if source == "hf":
         return [f"https://huggingface.co/{f['repo']}/resolve/main/{name}"]
@@ -113,6 +140,8 @@ def args(cfg, name):
     """让 CrispASR 使用这个模型的命令行参数。"""
     if name == "qwen":
         return ["--backend", "qwen3-1.7b", "-m", cfg["qwen_model"]]
+    if name == "qwen06":
+        return ["--backend", "qwen3", "-m", cfg["qwen06_model"]]
     if name == "mimo":
         return ["--backend", "mimo-asr", "-m", cfg["mimo_model"], "--codec-model", cfg["mimo_codec"]]
     if name == "whisper":

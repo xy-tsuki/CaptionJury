@@ -15,6 +15,7 @@ from core import download, models
 
 DATA = os.urandom(250_000)
 FILES = {}  # URL 路径 -> 内容
+SLOW = [False]  # 为 True 时分小块慢慢发，用来测暂停和取消
 SEEN = []  # (路径, Range 头)
 
 
@@ -34,7 +35,15 @@ class Server(http.server.BaseHTTPRequestHandler):
         self.send_response(206 if m else 200)
         self.send_header("Content-Length", str(len(body) - start))
         self.end_headers()
-        self.wfile.write(body[start:])
+        if not SLOW[0]:
+            self.wfile.write(body[start:])
+            return
+        try:
+            for i in range(start, len(body), 16384):
+                self.wfile.write(body[i:i + 16384])
+                time.sleep(0.01)
+        except (ConnectionError, OSError):  # 客户端暂停或取消时断开
+            pass
 
 
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Server)
@@ -139,4 +148,87 @@ d = Path(cfg["runtime_vulkan"])
 assert sorted(p.name for p in d.iterdir()) == ["crispasr.exe", "ggml.dll"], list(d.iterdir())
 assert not any(p.suffix in (".zip", ".part") or p.name.endswith(".unzip") for p in d.parent.iterdir()), list(d.parent.iterdir())
 rt.clear(); rt.update(real_rt)
+
+# 8. 运行库的加速镜像：地址是镜像前缀加官方地址；选了镜像先试它，其余来源依次排在后面
+f = models.RUNTIMES["cuda12"]["file"]
+assert models.urls(f, "official") == [f["url"]]
+assert models.urls(f, "ghfast") == ["https://ghfast.top/" + f["url"]]
+import threading
+hold = threading.Event()
+dl._thread = threading.Thread(target=hold.wait, daemon=True)  # 占着下载线程，add 只排队、不真的下载
+dl._thread.start()
+dl.add("runtime_cuda12", "ghproxy")
+assert dl._sources["runtime_cuda12"][0] == "ghproxy" and set(dl._sources["runtime_cuda12"]) == set(models.RUNTIME_SOURCES)
+dl.add("runtime_cpu", "hf")  # 模型的来源名对运行库无效：从官方开始
+assert dl._sources["runtime_cpu"][0] == "official"
+dl.cancel()
+hold.set()
+
+# 9. 暂停、继续、单项取消：暂停时 .part 留着、放回队首；继续时用 Range 接着下
+def wait(cond, secs=10):
+    for _ in range(int(secs / 0.02)):
+        if cond():
+            return
+        time.sleep(0.02)
+    raise AssertionError("等待超时")
+
+
+BIG = os.urandom(2_000_000)
+FILES["/hf/x/y/resolve/main/big.gguf"] = BIG
+models.MODELS[name]["files"]["whisper_model"] = {"path": r"whisper\big.gguf", "repo": "x/y", "size": len(BIG), "sha256": hashlib.sha256(BIG).hexdigest()}
+download.CHUNK = 16384  # 每读 16 KB 检查一次是否要停
+SLOW[0] = True
+cfg = {"whisper_model": str(tmp / "p" / "big.gguf")}
+dl = download.Downloader(lambda: cfg, lambda c: None)
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.pause()
+wait(lambda: not dl._thread.is_alive())
+st = dl.status()
+part = tmp / "p" / "big.gguf.part"
+assert st["paused"] and st["queue"] == [name] and not st["done"] and not st["failed"], st
+assert 0 < part.stat().st_size < len(BIG) and not Path(cfg["whisper_model"]).exists()
+assert st["labels"][name] == models.MODELS[name]["label"] and st["sizes"][name] == len(BIG)
+have = part.stat().st_size
+SEEN.clear()
+dl.resume()
+wait(lambda: name in dl.state["done"])
+assert Path(cfg["whisper_model"]).read_bytes() == BIG and not dl.status()["paused"]
+assert SEEN[0] == ("/hf/x/y/resolve/main/big.gguf", f"bytes={have}-"), SEEN
+
+cfg["whisper_model"] = str(tmp / "q" / "big.gguf")  # 只取消正在下的这一项
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.cancel(name)
+wait(lambda: not dl._thread.is_alive())
+assert "已取消" in dl.status()["failed"][name] and not dl.queue
+assert not (tmp / "q" / "big.gguf.part").exists()  # 取消就删掉下了一半的文件
+
+cfg["whisper_model"] = str(tmp / "r" / "big.gguf")  # 暂停后再取消：排队里的那项直接删
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.pause()
+wait(lambda: not dl._thread.is_alive())
+assert (tmp / "r" / "big.gguf.part").exists()
+dl.cancel()
+st = dl.status()
+assert not st["paused"] and not st["queue"] and st["current"] is None and "已取消" in st["failed"][name], st
+assert not (tmp / "r" / "big.gguf.part").exists()
+dl.pause()  # 没东西可暂停时什么也不做
+assert not dl.status()["paused"]
+
+cfg["whisper_model"] = str(tmp / "s" / "big.gguf")  # 暂停后只取消这一项（PR #5 review）：删掉，继续也不再下
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.pause()
+wait(lambda: not dl._thread.is_alive())
+assert (dl.state["current"] or {}).get("name") == name and (tmp / "s" / "big.gguf.part").exists()
+dl.cancel(name)
+st = dl.status()
+assert not st["queue"] and st["current"] is None and not st["paused"] and "已取消" in st["failed"][name], st
+assert not (tmp / "s" / "big.gguf.part").exists()
+dl.resume()
+assert not dl.queue and not (dl._thread and dl._thread.is_alive()) and not Path(cfg["whisper_model"]).exists()
+SLOW[0] = False
+models.MODELS[name]["files"]["whisper_model"] = real
 print("all passed")

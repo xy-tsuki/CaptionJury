@@ -5,7 +5,7 @@ import tempfile
 import threading
 import time
 
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-win-")
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp(prefix="captionjury-win-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 import http.server

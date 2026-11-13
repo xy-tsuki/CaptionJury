@@ -15,7 +15,7 @@ from pathlib import Path
 import webview
 from webview.dom import DOMEventHandler
 
-from core import deepseek, download, lines, models, pipeline, store, subtitles
+from core import bench, deepseek, download, lines, models, pipeline, runtime, store, subtitles
 from core.version import VERSION
 
 # 打包成 exe 后，界面文件在 PyInstaller 解出的目录（sys._MEIPASS）里
@@ -82,6 +82,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Api:
     def __init__(self):
         self._queue = pipeline.Queue()
+        self._bench = bench.Bench()
         self._dropped = []
         self._vram = (0.0, None)
         self._window = None
@@ -99,6 +100,8 @@ class Api:
         ffprobe = str(Path(cfg["ffmpeg"]).with_name("ffprobe"))
         out = []
         for p in paths:
+            if not os.path.isfile(p):  # 源文件被移走或删掉了
+                continue
             r = subprocess.run(
                 [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", p],
                 capture_output=True, creationflags=NO_WINDOW,
@@ -113,13 +116,43 @@ class Api:
     # ---------- queue ----------
     def start(self, paths, lang, opt, formats, diarize=False, compare=False, terms="", mode="custom"):
         cfg = store.load_config()
+        if self._bench.state["running"]:
+            return {"error": "正在测速，结束后再开始转写"}
         if opt and cfg.get("proof_mode") != "agent" and not store.has_key():
             return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存，或者改用复制给 Agent 的方式"}
+        light = mode == "light"
+        if light:
+            if not models.installed(cfg, "qwen06"):
+                return {"error": "轻量模式要用 Qwen3-ASR 0.6B，请先在设置的「本地模型」里下载"}
+            opt = compare = diarize = False
         if diarize and not Path(store.load_config()["moss_model"]).exists():
             return {"error": "找不到 MOSS 模型，请在设置里检查路径"}
         store.save_config({"lang": lang, "opt": opt, "compare": compare, "formats": formats, "diarize": diarize, "mode": mode})
         try:
-            self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms))
+            self._queue.start(paths, lang, opt, formats, diarize, compare, deepseek.clean_terms(terms), light=light)
+        except RuntimeError as e:
+            return {"error": str(e)}
+        return {}
+
+    def resume_job(self, jid):
+        """历史页的「继续转写」：沿用这个任务目录里跑完的步骤，从没跑完的那一步开始；后面排着的文件接着转。"""
+        if self._queue.state["running"]:
+            return {"error": "已有任务正在运行，结束后再继续"}
+        if self._bench.state["running"]:
+            return {"error": "正在测速，结束后再继续"}
+        job = store.load_job(jid)
+        p = job.get("params")
+        if not p or "written" in job:
+            return {"error": "这个任务不能接着跑（旧版本建的或已经做完），可以点「重新转写」"}
+        if not Path(job["source"]).is_file():
+            return {"error": f"找不到源文件：{job['source']}"}
+        cfg = store.load_config()
+        if p["opt"] and cfg.get("proof_mode") != "agent" and not store.has_key():
+            return {"error": f"AI 精度优化需要 {deepseek.label(cfg)} 的密钥，请先在设置里保存"}
+        files = [job["source"]] + [f for f in p.get("rest", []) if Path(f).is_file()]
+        try:
+            self._queue.start(files, p["lang"], p["opt"], p["formats"], p["diarize"], p["compare"], p["terms"], resume=jid,
+                              light=p.get("light", False))
         except RuntimeError as e:
             return {"error": str(e)}
         return {}
@@ -198,6 +231,10 @@ class Api:
         s["paused"] = self._queue.paused
         s["vram"] = self._gpu_memory() if s["running"] else None
         s["dropped"], self._dropped = self._dropped, []
+        d = self._downloads.state  # 导航上的下载进度
+        cur = d["current"]
+        s["download"] = {"active": bool(cur or self._downloads.queue), "paused": d["paused"],
+                         "pct": cur["done"] / cur["total"] * 100 if cur and cur["total"] else 0}
         return s
 
     def _gpu_memory(self):
@@ -372,6 +409,7 @@ class Api:
         cfg["version"] = VERSION
         cfg["backups_active"] = {lang: [models.MODELS[k]["short"] for k in models.backups_for(cfg, lang)] for lang in ("zh", "ja")}
         cfg["backups_keys"] = {lang: list(models.backups_for(cfg, lang)) for lang in ("zh", "ja")}  # 估算用时按这些键查速度
+        cfg["light_ok"] = models.installed(cfg, "qwen06")
         return cfg
 
     def save_config(self, changes):
@@ -423,12 +461,25 @@ class Api:
     def sources(self):
         return [{"key": k, "label": v} for k, v in models.SOURCES.items()]
 
+    def runtime_sources(self):
+        return [{"key": k, "label": v} for k, v in models.RUNTIME_SOURCES.items()]
+
     def download_model(self, name, source):
         """排队下载一个模型缺的文件。"""
         return self._downloads.add(name, source)
 
-    def cancel_download(self):
-        self._downloads.cancel()
+    def cancel_download(self, name=None):
+        """name 为空时全部取消，否则只取消这一项。"""
+        self._downloads.cancel(name)
+        return self._downloads.status()
+
+    def pause_download(self):
+        self._downloads.pause()
+        return self._downloads.status()
+
+    def resume_download(self):
+        self._downloads.resume()
+        return self._downloads.status()
 
     def download_status(self):
         return self._downloads.status()
@@ -444,25 +495,57 @@ class Api:
 
     def check_models(self):
         cfg = store.load_config()
-        runtime = Path(cfg["runtime_" + cfg["gpu_backend"]]) / "crispasr.exe"
-        return {name: models.installed(cfg, name) for name in models.MODELS} | {"runtime": runtime.exists()}
+        rts = {k: runtime.installed(cfg, k) for k in models.RUNTIMES}
+        want = cfg["gpu_backend"]
+        return {name: models.installed(cfg, name) for name in models.MODELS} | {
+            "runtime": any(rts.values()) if want == "auto" else rts.get(want, False), "runtimes": rts}
+
+    def runtime_check(self):
+        """设置页的「检测运行环境」：每个已安装的运行库能不能用、看到哪些显卡，以及自动模式会选哪个。"""
+        cfg = store.load_config()
+        rows = []
+        for k, r in models.RUNTIMES.items():
+            if not runtime.installed(cfg, k):
+                rows.append({"key": k, "label": r["short"], "state": "没有安装"})
+                continue
+            got = runtime.check(cfg, k)
+            devs = runtime.diagnose(runtime.exe(cfg, k))["devices"]
+            rows.append({"key": k, "label": r["short"], "state": got["label"] if isinstance(got, dict) else got,
+                         "ok": isinstance(got, dict),
+                         "devices": [f"{i}：{d['desc']}（{d['total'] / 1024:.0f} GB）" for i, d in enumerate(devs)]})
+        try:
+            chosen = runtime.describe(runtime.pick(cfg))
+        except RuntimeError as e:
+            chosen = str(e)
+        return {"rows": rows, "chosen": chosen}
+
+    def bench_start(self, model="qwen"):
+        """设置页的「测试并选择最快后端」。转写时不能测，两边会抢显卡。"""
+        if self._queue.state["running"]:
+            return {"error": "有任务正在转写，结束后再测速"}
+        return self._bench.start(model)
+
+    def bench_status(self):
+        s = self._bench.status()
+        cfg = store.load_config()
+        b = cfg.get("bench") or {}
+        s["saved"] = b if b else None
+        s["valid"] = bool(b) and bench.fastest(cfg, b.get("model", "qwen")) is not None
+        return s
 
     def setup_info(self):
-        """首次运行引导页要的信息：显卡、两种运行库、必装模型是否就绪。"""
+        """首次运行引导页要的信息：显卡、各个运行库、必装模型是否就绪。"""
         cfg = store.load_config()
-        gpu = None
-        try:
-            r = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
-                               capture_output=True, text=True, timeout=10, creationflags=NO_WINDOW)
-            if r.returncode == 0 and r.stdout.strip():
-                name, driver = [x.strip() for x in r.stdout.strip().splitlines()[0].split(",")[:2]]
-                gpu = {"name": name, "driver": driver, "cuda_ok": float(driver.split(".")[0]) >= 580}
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
+        gpu = runtime.nvidia()
+        avx2 = runtime.has_avx2()
+        if gpu:
+            gpu["cuda13"] = runtime.driver_major(gpu) >= models.RUNTIMES["cuda"]["min_driver"]
+            gpu["cuda12"] = runtime.driver_major(gpu) >= models.RUNTIMES["cuda12"]["min_driver"]
         runtimes = [{"key": k, "label": r["label"], "desc": r["desc"], "size": r["file"]["size"],
-                     "installed": (Path(cfg["runtime_" + k]) / "crispasr.exe").is_file()} for k, r in models.RUNTIMES.items()]
+                     "installed": runtime.installed(cfg, k)} for k, r in models.RUNTIMES.items()]
         need = [m for m in models.MODELS if models.MODELS[m]["role"] == "main"]
-        return {"gpu": gpu, "backend": cfg["gpu_backend"], "runtimes": runtimes,
+        return {"gpu": gpu, "avx2": avx2, "recommend": runtime.recommend(gpu, avx2), "backend": cfg["gpu_backend"],
+                "runtimes": runtimes,
                 "models": [{"name": m, "label": models.MODELS[m]["label"], "size": models.size(m),
                             "installed": models.installed(cfg, m)} for m in need],
                 "ffmpeg": bool(shutil.which(cfg["ffmpeg"]) or Path(cfg["ffmpeg"]).is_file())}

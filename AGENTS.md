@@ -1,6 +1,6 @@
 # 字幕对照组（英文 CaptionJury，日文 字幕くらべラボ；仓库 xy-tsuki/CaptionJury）
 
-原名「听写 / Tingxie」，2026-11-13 改名。为了不影响已有的数据和安装，这些地方沿用旧名：数据目录 `%LOCALAPPDATA%\Tingxie`、环境变量 `TINGXIE_HOME`、安装包的 `AppId`、本地开发目录和 venv 路径。
+原名「听写 / Tingxie」，2026-11-13 改名。数据目录从 `%LOCALAPPDATA%\Tingxie` 搬到 `%LOCALAPPDATA%\CaptionJury`，程序启动时自动迁移（`store.migrate`，设置里写死的旧路径一起改），代码里只有这一处还认旧名；对外文档（README、界面、安装包）不再提旧名。安装包的 `AppId`（一串 GUID）没变，按升级处理。本地开发目录 `E:\Documents\Tingxie` 暂未改名。
 
 ## 项目是什么
 Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字幕（SRT / ASS / VTT / TXT）。在本机 GPU 上跑语音识别，再由大语言模型对照几份识别结果校对（默认 DeepSeek，也可以换别家接口，或者复制给用户订阅的 Agent）。用户自己用，暂未发布。
@@ -8,8 +8,8 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 
 ## 技术栈
 - Python 3.11，界面用 pywebview（WebView2 窗口）加一个本机 HTTP 服务；前端是原生 HTML / CSS / JS，没有构建步骤。
-- 语音识别通过 CrispASR 0.8.50（ggml，CUDA 13 / Vulkan 两个版本）的命令行调用：
-  - 主模型 Qwen3-ASR 1.7B q8_0，配 Qwen3-ForcedAligner 0.6B 出字级时间戳；
+- 语音识别通过 CrispASR 0.8.50（ggml；CUDA 13、CUDA 12.6、Vulkan、CPU、CPU Legacy 五个版本，按需下载）的命令行调用：
+  - 主模型 Qwen3-ASR 1.7B q8_0，配 Qwen3-ForcedAligner 0.6B 出字级时间戳；轻量模式换成 Qwen3-ASR 0.6B q4_k（可选下载，不在 GitHub 备份 models-v1 里）；
   - 备用模型（用户按语言勾选，可多选）：MiMo-V2.5-ASR q4_k（中日，日语较弱：汉字写成简体字形，字错率约 59%，Whisper 约 17%）、Whisper large-v3 q5_0（中日）。Parakeet CTC 1.1B ja 试过，日语字错率约 46%，已去掉（见 decisions）；
   - 说话人区分：MOSS-Transcribe-Diarize 0.9B q4_k。
 - 校对：OpenAI 兼容格式的 chat/completions 接口（预置 DeepSeek、OpenAI、通义千问、Kimi、智谱、硅基流动、OpenRouter、Gemini、Claude，也可以填自定义地址），用 httpx 直接调用；或者"复制给 Agent"：程序给出提示词，用户粘贴回复。
@@ -21,8 +21,10 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - `core/version.py`：版本号。发版时改这里，tag 必须是 `v` 加这个版本号。
 - `packaging/`：打包和安装包。`build.ps1` 是唯一的构建入口（本机和 CI 共用）；`captionjury.spec` 是 PyInstaller 配置；`installer.iss` 是 Inno Setup 安装包脚本；`collect_licenses.py` 收集第三方许可证；`make_icon.py` 生成 `icon.ico`；`release-notes.md` 是 Release 说明模板。
 - `core/pipeline.py`：任务队列和整条流水线（抽音频 → 检测人声 → 切块 → MOSS → Qwen → 断句 → 备用模型 → AI 大纲 → Qwen 复核 → AI 校对 → 写字幕），也负责调用 crispasr.exe。
+- `core/bench.py`：本机测速。用最近一个任务的 30 秒音频，比较能用的运行库，最快的存进设置 `bench`，自动模式把它排第一。
+- `core/runtime.py`：挑选运行库和显卡。自动模式按显卡和驱动排候选，用 `crispasr --diagnostics` 确认枚举到了 GPU；跑任务失败时判断是不是运行库或显卡的问题（`failure`）。
 - `core/models.py`：模型清单。每个模型的用途、所需文件（含 Hugging Face 仓库、大小、SHA-256）、默认路径、下载来源、CrispASR 参数，以及每种语言用哪些备用模型。加新模型从这里开始。
-- `core/download.py`：模型和运行库下载器。断点续传、SHA-256 校验、失败自动换源；GitHub 备份里超过 2 GB 的文件分卷下载；运行库 zip 下完后解压到数据目录。
+- `core/download.py`：模型和运行库下载器。断点续传、SHA-256 校验、失败自动换源；GitHub 备份里超过 2 GB 的文件分卷下载；运行库 zip 下完后解压到数据目录。可以暂停（保留 .part，继续时接着下）和取消（删掉下了一半的文件）；界面在 `#downloads` 页。
 - `core/chunks.py`：把音频切成约 30 秒、长度均匀的块，前后重叠，每块只"拥有"切点之后的部分。
 - `core/sentences.py`：按字级时间戳把各块的结果拼成全文，再按标点和停顿全局断句；把其他模型的文字按句对齐挂上去。
 - `core/speakers.py`：把 MOSS 的说话人编号按文字对齐到 Qwen 的每个字上。
@@ -30,18 +32,18 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - `core/progress.py`：按历史运行时间估算进度和剩余时间。
 - `core/subtitles.py`：把句子排成字幕条并写出各种格式。
 - `core/lines.py`：校对页按每条字数把长句拆成一条条，换字数时拼回再拆。
-- `core/store.py`：配置、加密密钥和任务文件，全部在 `%LOCALAPPDATA%\Tingxie`（可用环境变量 `TINGXIE_HOME` 改位置）。
+- `core/store.py`：配置、加密密钥和任务文件，全部在 `%LOCALAPPDATA%\CaptionJury`（可用环境变量 `CAPTIONJURY_HOME` 改位置；设了它就不做旧目录迁移）。
 - `ui/`：前端页面（首次运行引导、新建、进度、校对和逐句对照各模型结果、历史记录、设置）。左侧导航，没有构建步骤；颜色变量都在 `app.css` 开头，字幕状态（一致 / 已确认 / 已修正 / 存疑 / 初稿）在列表、筛选和时间轴上用同一套颜色。
 - `tests/`：单元测试和各种手动检查脚本，见下面"常用命令"。
 - `参考稿_*.txt`：测试视频的人工校对稿，用来算字错率。内容是私人录音，只放在本机，不进仓库（已写进 .gitignore）。
 
 ## 常用命令
-命令里的 `PY` 指 `%LOCALAPPDATA%\Tingxie\venv\Scripts\python.exe`（开发用的虚拟环境，第一次用 `python -m venv %LOCALAPPDATA%\Tingxie\venv` 建好，再 `PY -m pip install -r requirements.txt`）。
+命令里的 `PY` 指 `%LOCALAPPDATA%\CaptionJury\venv\Scripts\python.exe`（开发用的虚拟环境，第一次用 `python -m venv %LOCALAPPDATA%\CaptionJury\venv` 建好，再 `PY -m pip install -r requirements.txt`）。
 - 开发运行：`PY app.py`。需要图形界面；运行库和模型可以在程序的引导页下载，也可以在设置里指向已有文件。
 - 构建安装包：`powershell -ExecutionPolicy Bypass -File packaging\build.ps1`，输出 `build\installer\CaptionJury-Setup-<版本>.exe`。需要 Python 3.11 和 Inno Setup 6.5 以上；本机没有 Inno Setup 时加 `-SkipInstaller` 只出 `build\dist\CaptionJury\CaptionJury.exe`（目录结构和安装后一样，可以直接运行）。
 - 发版：改 `core/version.py` → 合并到 main → 推送 `vX.Y.Z` tag，`.github/workflows/release.yml` 会构建安装包并发 Release。在 Actions 页面手动运行同一个流程只构建、不发版，安装包在构建产物里，用来发版前试装。
 - 语法检查：`PY -m compileall -q app.py core tests`
-- 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`、`PY tests/align_unit.py`
+- 单元测试（不需要模型和网络）：`PY tests/speakers_unit.py`、`PY tests/deepseek_unit.py`、`PY tests/backups_unit.py`、`PY tests/download_unit.py`、`PY tests/extras_unit.py`、`PY tests/align_unit.py`、`PY tests/runtime_unit.py`、`PY tests/resume_unit.py`、`PY tests/migrate_unit.py`
 - 字错率：`PY tests/cer.py 参考稿_VID_1001.txt 结果.srt [job.json ...] [-v]`
 - 按读音的字错率（写法不同、读音相同不算错，日语内容用这个）：`PY tests/cer_kana.py 参考稿.txt 结果.srt job.json [-- 参考稿2.txt 结果2 ...] [-v]`，多段时给出加权合计。需要另装 `pykakasi`（不进 requirements.txt）。宣传和比较用的精度数字以它为准。
 - 需要本机模型的检查（不进 CI）：
@@ -53,7 +55,7 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 
 ## 架构要点
 - **切块**：Qwen 常漏掉块开头的话，所以每块从切点前 3 秒开始，但只保留切点之后的字（按字级时间戳判断归属），全文拼好以后再统一断句。切点放在目标长度附近最安静的 300 毫秒。断句后，前一句没有句末标点、同一个人停顿不到 0.3 秒就接着说的，合成一句（合起来不超过 28 字，`sentences.merge_fragments`）：这类切口多半来自说话人编号短暂跳动。
-- **三种模式和两个开关**：新建页让用户选模式（`cfg["mode"]`）：快速（两个开关都关）、精准（都开，默认）、自定义（自己勾）；前端按模式算出两个开关再调 `start`，旧设置没有 `mode` 时按开关推出来（`store.load_config`）。选了模式但缺校对 AI 密钥或备用模型时，新建页直接提示。新建页的"多模型对照"（`compare`）只决定跑不跑备用模型；"AI 精度优化"（`opt`）决定跑不跑 AI 大纲、Qwen 复核和 AI 校对。两个可以单开，任务里分别记成 `job["compare"]` 和 `job["opt"]`；旧任务没有 `compare` 字段，按 `opt` 算。
+- **四种模式和两个开关**：新建页让用户选模式（`cfg["mode"]`）：轻量（主模型换成 0.6B，两个开关和说话人区分都关，只导出 TXT 时连对齐也省掉；`Queue.main` / `Queue.align`）、快速（两个开关都关）、精准（都开，默认）、自定义（自己勾）；前端按模式算出两个开关再调 `start`，旧设置没有 `mode` 时按开关推出来（`store.load_config`）。选了模式但缺校对 AI 密钥或备用模型时，新建页直接提示。新建页的"多模型对照"（`compare`）只决定跑不跑备用模型；"AI 精度优化"（`opt`）决定跑不跑 AI 大纲、Qwen 复核和 AI 校对。两个可以单开，任务里分别记成 `job["compare"]` 和 `job["opt"]`；旧任务没有 `compare` 字段，按 `opt` 算。
 - **多份结果**：每句可能有好几份文字：`qwen`（主结果）、`qwen2`（换了切点再识别一遍，带术语提示，AI 精度优化时才有）、`moss`，以及每个启用的备用模型各一个字段（`mimo` / `whisper`，多模型对照时才有；旧任务里可能还有 `parakeet`，校对页照样显示）。校对 AI 按多数一致来纠错。校对页有几份就列几份给用户对照。
 - **字幕状态**：`ok` 一致、`keep` 已确认、`fix` 已修正、`ask` 存疑、`raw` 初稿。存疑的条目用户改过文字（手动填写或采用某个写法）或点了"标为已确认"，就变成 `keep`。
 - **历史记录**：`store.list_jobs` 读每个任务的 job.json 做概要；删除只删任务目录（`store.delete_job`），不动源文件和导出的字幕，正在跑的任务不能删。
@@ -69,11 +71,13 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 - **Qwen 的上下文提示**要写成一句话。写成词表时，Qwen 会把它原样读出来；近乎静音的块还会把提示读出来，所以有 `_echoes` 过滤。提示最多 `HINT_MAX`（40）个词：试过近 300 个词，Qwen 并没有因此写对，反而带偏读音相近的话；完整词库只交给 AI。
 - **模型下载**：每个文件有三个来源：Hugging Face 原始仓库、hf-mirror（中国大陆镜像）、本项目 GitHub Release（发布附件）备份 `models-v1`。先下到 `.part`，大小和 SHA-256 都对上才改名成正式文件，所以半截文件不会被当成已安装。
 - **安装版和数据分开**：程序装在 `%LOCALAPPDATA%\Programs\CaptionJury`（只为当前用户）或 Program Files（所有用户），里面只有 exe、依赖、自带的 FFmpeg 和许可证；运行库、模型、设置和任务都在数据目录，升级和卸载不会动它们（卸载时会问要不要删）。打包后 `sys._MEIPASS` 指向界面文件所在目录，`store.load_config` 在配置里的 ffmpeg 还是默认值时改用自带的那份。
-- **首次运行引导**：运行库或必装模型缺一个，启动时就进 `#setup` 页。运行库从 CrispASR 官方 Release 下载 zip（`models.RUNTIMES`，固定版本和 SHA-256），按 `nvidia-smi` 查到的驱动版本推荐 CUDA（驱动 580 以上）或 Vulkan。
+- **首次运行引导**：运行库或必装模型缺一个，启动时就进 `#setup` 页。运行库从 CrispASR 官方 Release 下载 zip（`models.RUNTIMES`，固定版本和 SHA-256），按 `nvidia-smi` 查到的驱动版本推荐（`runtime.recommend`）。设置一律存成自动，下载哪个由用户选。
 - **校对页按导出的样子拆好**：任务结束时和打开任务时（`app.Api.job`），`lines.ensure` 按 `job["line_max"]` 把长句拆成一条条（`job["split"]` 记着按哪种字数拆的），每条有自己的文字、`qwen`、`ct`、时间和各模型的写法（`sentences.cut_at` 按位置切），同一句拆出来的几条 `src` 相同，第一条的 `full` 存着各模型的整句写法。换每条字数时先拼回原句（状态取最需要注意的那个），再按新字数拆；拼回时各条手动改过的内部时间会丢掉。用户把一条改长了，导出时照样再拆，校对页在拆开处画一条竖线（`subtitles.breaks`）。
 - **改出入点**：校对页底部时间条上，每个方块左右边缘可以拖动；和相邻一条首尾相连时，交界处一起移动。松手才调 `set_times`，服务器把时间夹在前后两条之间。
 - **导出切条**：每句保留每个字的开始时间（`ct`，和 `qwen` 逐字对应，任务结束时由 `times` 转来）；导出时按 `job["line_max"]`（横屏 18 字、竖屏 12 字、不限 28 字，`subtitles.LINE_MAX`）拆长句，拆开处的时间用那个字的开始时间，改过的文字靠 difflib 对回 `qwen`，对不上或旧任务没有 `ct` 时按字数分摊。断点优先句末标点、逗号，其次按字形猜词的分界（`subtitles._score`：名词＋助词后、片假名词结束处、中文虚词前后；不拆常用词 `NO_SPLIT`、汉字词、促音和小写假名开头），再看停顿。没有分词工具，规则是凭经验定的。
-- **任务数据**：每个任务一个目录 `%LOCALAPPDATA%\Tingxie\jobs\<id>\`，里面有 job.json、音频和各模型的原始输出。
+- **运行库自动选择**（issue #4）：`gpu_backend` 是 `auto` 或 `models.RUNTIMES` 里的某一个，`gpu_device` 是 `auto`（总显存最大且不少于 `MIN_VRAM_MB` 的那块）或显卡编号。自动模式的顺序：NVIDIA 驱动 580 以上 CUDA 13 → 528 以上 CUDA 12.6 → Vulkan → CPU（不支持 AVX2 时只有 CPU Legacy），驱动版本只用来筛选，真正能不能用看 `--diagnostics` 有没有枚举到 GPU（CUDA 初始化失败时 CrispASR 不报错、直接在 CPU 上跑，所以必须先诊断）。任务开始时选一次（`Queue._pick_runtime`），每次调 crispasr 都经过 `Queue._crispasr`：stderr 里是初始化失败、显存不足，或退出码是缺 DLL、指令集不支持时，自动模式换下一个运行库从头重跑这一步；手动模式直接报错，写明原因和已安装的其他运行库。实际设备记在 `job["device"]`（如 `CUDA 12.6 · RTX A6000（CUDA 13 初始化失败）`）和 `job["runtime"]`，进度页显示。速度统计按运行库分开存（`speed_rt`），中途换过运行库的那次不记。没有 `gpu_device` 的旧设置读取时改成自动。
+- **断点续跑**：每一步跑完后在输出旁写 `<输出>.key`，内容是输入的指纹（crispasr 命令、切块文件内容、模型文件大小；抽音频看源文件的路径、大小、修改时间；AI 大纲和校对看交给 AI 的数据）。接着跑时指纹一样就沿用（`_reusable`），否则先删 key 再重跑，所以跑到一半的输出不会被沿用。AI 的结果存在 `ai_outline.json` / `ai_proof.json`。任务开始时就存 job.json，带 `state`（running / done / stopped / failed）和 `params`（再跑一遍要的参数和排在后面的文件 `rest`）；`Api.resume_job` 用同一个目录接着跑。沿用的步骤在进度条上显示「沿用上次结果」，不进速度统计。历史页的「重新转写」只是把源文件和当时的设置放进新建页，新建一个任务从头跑。
+- **任务数据**：每个任务一个目录 `%LOCALAPPDATA%\CaptionJury\jobs\<id>\`，里面有 job.json、音频和各模型的原始输出。
 
 ## 已知问题
 - GitHub 备份（Release `models-v1`）已上传（2026-11-10），附件名和分卷必须和 `models.urls(f, "github")` 一致。以后换模型或换版本要开新的 Release（`models-v2`），并同步改 `GITHUB_BACKUP`；许可证见 `docs/model-licenses.md`，Release 说明要附来源和许可证全文。
@@ -88,5 +92,5 @@ Windows 桌面工具：把中日混说的视频或音频转成带时间轴的字
 ## 项目约定
 - 代码注释和文档字符串一律用中文（全局约定）。较早的代码里还有英文注释，改到哪里顺手改成中文。界面文字和给用户看的提示用中文。
 - Agent 自己把识别结果发给 DeepSeek（或任何校对接口）、或者自己下载模型之前，要先问用户，并说明名称、来源和大小。用户在程序里点下载不受这条限制。
-- 测试输出不要写到原视频旁边，用临时目录或 `TINGXIE_HOME` 指向的目录。
+- 测试输出不要写到原视频旁边，用临时目录或 `CAPTIONJURY_HOME` 指向的目录。
 - API 密钥只能经 DPAPI 加密保存，不能打印，也不能写进日志。

@@ -1,5 +1,6 @@
 # 构建安装包。
 # - 推送 vX.Y.Z 格式的 tag：构建安装包，发布同名 Release，附上 CaptionJury-Setup-X.Y.Z.exe。
+#   已经有同名 Release（比如先建好的草稿，发布草稿时才创建 tag）就只替换安装包和说明，不重复创建。
 # - dev 分支上改了打包相关文件，或在 Actions 页面手动运行：只构建，安装包作为构建产物（artifact）下载，
 #   不发 Release，用来发版前试装。
 name: Release
@@ -38,6 +39,9 @@ jobs:
           python tests/download_unit.py
           python tests/extras_unit.py
           python tests/align_unit.py
+          python tests/runtime_unit.py
+          python tests/resume_unit.py
+          python tests/migrate_unit.py
 
       - name: 准备 Inno Setup 6.5 以上
         shell: pwsh
@@ -67,4 +71,14 @@ jobs:
           $notes = Get-Content packaging/release-notes.md -Raw -Encoding utf8
           $notes = $notes.Replace("{SHA256}", $hash).Replace("{FILE}", $exe.Name)
           Set-Content -Path notes.md -Value $notes -Encoding utf8
-          gh release create "${{ github.ref_name }}" $exe.FullName --title "字幕对照组 CaptionJury ${{ github.ref_name }}" --notes-file notes.md
+          gh release view "${{ github.ref_name }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # 先手动建了 Release（草稿发布时才打 tag）：换成按这个 tag 构建的安装包，更新说明里的 SHA-256
+            gh release upload "${{ github.ref_name }}" $exe.FullName --clobber
+            $body = gh release view "${{ github.ref_name }}" --json body --jq .body
+            $body = $body -replace 'SHA-256：`[0-9a-f]{64}`', "SHA-256：``$hash``"
+            Set-Content -Path notes.md -Value $body -Encoding utf8
+            gh release edit "${{ github.ref_name }}" --notes-file notes.md
+          } else {
+            gh release create "${{ github.ref_name }}" $exe.FullName --title "字幕对照组 CaptionJury ${{ github.ref_name }}" --notes-file notes.md
+          }

@@ -136,19 +136,20 @@ const tipSeen = (k) => { try { return localStorage.getItem('tip_' + k) === '1'; 
 const tipHide = (k) => { try { localStorage.setItem('tip_' + k, '1'); } catch { /* 存不了就下次再显示 */ } };
 
 /* ---------- 新建 ---------- */
-/* 三种模式：快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
+/* 四种模式：轻量用小模型；快速只用主模型；精准多模型对照 + AI 校对；自定义自己选（S.opt / S.compare 是自定义时的勾选） */
 const MODES = {
+  light: ['轻量', '小模型，内存或显存不够的电脑用，错字多一些。'],
   fast: ['快速', '只用主模型，最快出字幕。'],
   accurate: ['精准', '几个模型对照，AI 逐句校对，拿不准的标出来。'],
   custom: ['自定义', '自己选多模型对照和 AI 校对。'],
 };
-const modeFlags = (m) => (m === 'fast' ? { opt: false, compare: false } : m === 'accurate' ? { opt: true, compare: true } : { opt: S.opt, compare: S.compare });
+const modeFlags = (m) => (m === 'fast' || m === 'light' ? { opt: false, compare: false } : m === 'accurate' ? { opt: true, compare: true } : { opt: S.opt, compare: S.compare });
 
 /* 按以往的速度估算这次要多久（不含等你粘贴 Agent 回复的时间）；没有记录或没加文件时返回空 */
 function estimate(m) {
   const sp = (S.cfg && S.cfg.speed) || {};
   const total = S.files.reduce((a, f) => a + (f.duration || 0), 0);
-  if (!total || !sp.qwen) return '';
+  if (!total || !sp.qwen || m === 'light') return '';  // 轻量模式的速度单独记，还没有可参考的
   const { opt, compare } = modeFlags(m);
   let r = (sp.extract || 0) + (sp.vad || 0) + sp.qwen + (S.dia ? sp.moss || 0 : 0);
   if (compare) {
@@ -204,7 +205,7 @@ function renderNew() {
               <p>${esc(proofName())} 写全文大纲找出专有名词，Qwen 带着这些词再听一遍，最后对照各份结果逐句校对。只发送文字。${agentMode() ? '跑到这一步时会暂停，在进度页复制提示词给 Agent，再把回复粘贴回来。' : ''}</p>
               ${S.opt && S.cfg && !agentMode() && !S.cfg.has_key ? `<span class="warn">还没有保存 ${esc(proofName())} 的密钥，到设置里填写，或者改用复制给 Agent 的方式。</span>` : ''}</label>
           </div>` : ''}
-          <label class="opt check"><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
+          <label class="opt check"${S.mode === 'light' ? ' hidden' : ''}><input type="checkbox" id="dia" ${S.dia ? 'checked' : ''}><b>区分说话人</b>
             <p>分出是谁在说话，标到每条字幕上。适合访谈、对谈和会议；一个人讲的视频不用开。</p></label>
         </div>
         <div class="m-sec"><span class="lbl">字幕格式</span><div class="fmts" role="group" aria-label="字幕格式">${fmts}</div><span class="faint small">保存在源文件所在的文件夹。</span></div>
@@ -248,6 +249,8 @@ function renderNew() {
 function modeWarn() {
   const { opt, compare } = modeFlags(S.mode);
   const out = [];
+  if (S.mode === 'light' && S.cfg && !S.cfg.light_ok) out.push('轻量模式要用 Qwen3-ASR 0.6B（631 MB），<a href="#settings">到设置的「本地模型」里</a>下载。');
+  if (S.mode === 'light') out.push('轻量模式不区分说话人。只导出 TXT 时不做逐字对齐，更快。');
   if (opt && S.cfg && !agentMode() && !S.cfg.has_key) out.push(`AI 校对需要先设置：<a href="#settings">到设置里</a>填 ${esc(proofName())} 的 API 密钥，或者改用“复制给 Agent”（用你订阅的 AI，不需要密钥）。`);
   if (compare && !activeBackups().some(([, ms]) => ms.length)) out.push('没有可用的备用模型，只会用主模型识别。<a href="#settings">到设置里</a>下载并勾选。');
   if (opt && agentMode() && S.mode !== 'custom') out.push('跑到 AI 校对时会暂停，在进度页把提示词复制给你的 Agent，再把回复粘贴回来。');
@@ -264,7 +267,7 @@ async function start() {
   if (!S.files.length) return toast('请先添加文件');
   if (!S.formats.length) return toast('请至少选择一种字幕格式');
   const { opt, compare } = modeFlags(S.mode);
-  const r = await api().start(S.files.map((f) => f.path), S.lang, opt, S.formats, S.dia, compare, S.terms, S.mode);
+  const r = await api().start(S.files.map((f) => f.path), S.lang, opt, S.formats, S.mode === 'light' ? false : S.dia, compare, S.terms, S.mode);
   if (r.error) return toast(r.error);
   S.files = [];
   location.hash = '#progress';
@@ -428,6 +431,7 @@ function progressLeft(s, c) {
         <dt>多模型对照</dt><dd>${on(c.compare)}</dd>
         <dt>AI 精度优化</dt><dd>${c.opt ? esc(proofName()) : '关闭'}</dd>
         <dt>区分说话人</dt><dd>${on(c.diarize)}</dd>
+        ${c.device ? `<dt>运行设备</dt><dd>${esc(c.device)}</dd>` : ''}
         ${s.vram ? `<dt>显存</dt><dd class="mono">${s.vram}</dd>` : ''}
       </dl>
       ${s.error ? `<p class="err">${esc(s.error)}</p>` : ''}
@@ -870,8 +874,11 @@ function drawHistory() {
   const chips = (j) => [LANGS[j.lang], j.compare && '对照', j.opt && 'AI 优化', j.speakers && '说话人'].filter(Boolean).map((t) => `<span class="chip">${t}</span>`).join('');
   const acts = (j) => {
     if (j.id === live) return '<span class="undone">正在转写</span>';
-    const usable = j.count > 0;
-    return `${usable ? `<button class="btn sm" type="button" data-open="${j.id}">打开校对</button>${exportMenu(j.id)}` : ''}
+    const usable = j.done && j.count > 0 || !j.params && j.count > 0;  // 没做完、能接着跑的不打开校对，免得改了又被覆盖
+    const resumable = !j.done && j.params;
+    return `${resumable ? `<button class="btn sm solid" type="button" data-resume="${j.id}" title="已经跑完的模型不重跑，从停下的那一步开始">继续转写</button>` : ''}
+      ${usable ? `<button class="btn sm" type="button" data-open="${j.id}">打开校对</button>${exportMenu(j.id)}` : ''}
+      <button class="btn sm ghost" type="button" data-again="${j.id}" title="用同一个源文件重新转写，可以先改设置">重新转写</button>
       <button class="btn sm ghost" type="button" data-reveal="${esc(j.source)}" title="在资源管理器里显示源文件" aria-label="打开源文件所在文件夹">${I.folder}</button>
       <button class="btn sm ghost danger" type="button" data-del="${j.id}" title="删除这条记录" aria-label="删除这条记录">${I.trash}</button>`;
   };
@@ -881,12 +888,34 @@ function drawHistory() {
       <span class="h-when mono small dim">${when(j.created)}</span>
       <span class="h-dur mono small dim">${hms(j.duration)}</span>
       <div class="h-chips">${chips(j)}</div>
-      <div class="h-count">${j.done || j.id === live ? `<span>${j.count} 条</span>` : '<span class="undone">没有做完</span>'}${j.ask ? `<span class="a st-ask"><i class="dot"></i>存疑 ${j.ask}</span>` : ''}${j.fix ? `<span class="f st-fix"><i class="dot"></i>已修正 ${j.fix}</span>` : ''}</div>
+      <div class="h-count">${j.done || j.id === live ? `<span>${j.count} 条</span>` : `<span class="undone" title="${esc(j.error || '')}">${{ stopped: '已取消，没有做完', failed: '出错，没有做完', running: '中途被关掉，没有做完' }[j.state] || '没有做完'}</span>`}${j.ask ? `<span class="a st-ask"><i class="dot"></i>存疑 ${j.ask}</span>` : ''}${j.fix ? `<span class="f st-fix"><i class="dot"></i>已修正 ${j.fix}</span>` : ''}</div>
       <div class="h-acts">${acts(j)}</div>
     </div>`).join('')
     + (rows.length ? '' : '<p class="none-hit" style="padding:28px 32px">没有文件名包含这个词的记录。</p>');
   $$('[data-open]').forEach((b) => { b.onclick = async () => { await openJob(b.dataset.open); S.flt = 'all'; location.hash = '#review'; }; });
   $$('[data-reveal]').forEach((b) => { b.onclick = async () => { const r = await api().reveal(b.dataset.reveal); if (r && r.error) toast(r.error); }; });
+  $$('[data-resume]').forEach((b) => {
+    b.onclick = async () => {
+      const r = await api().resume_job(b.dataset.resume);
+      if (r.error) return toast(r.error);
+      location.hash = '#progress';
+    };
+  });
+  // 重新转写：把源文件放进新建页的队列，带上这个任务当时的设置，用户可以改了再开始
+  $$('[data-again]').forEach((b) => {
+    b.onclick = async () => {
+      const j = S.history.find((x) => x.id === b.dataset.again);
+      const got = await api().probe([j.source]);
+      if (!got.length) return toast('找不到源文件：' + j.source);
+      const p = j.params || { lang: j.lang, opt: j.opt, compare: j.compare, diarize: j.diarize };
+      S.lang = p.lang || S.lang; S.opt = !!p.opt; S.compare = !!p.compare; S.dia = !!p.diarize;
+      if (p.formats) S.formats = p.formats;
+      S.mode = p.light ? 'light' : S.opt && S.compare ? 'accurate' : !S.opt && !S.compare ? 'fast' : 'custom';
+      S.files = got;
+      location.hash = '#new';
+      toast('已放进新建页，确认设置后点开始');
+    };
+  });
   // 删除要点两次：第一次按钮变红提示，4 秒内再点才删
   $$('[data-del]').forEach((b) => {
     b.onclick = async () => {
@@ -953,16 +982,22 @@ async function renderSettings() {
         <div class="stack">
           <h3>必装</h3>${group('main')}
           <h3>区分说话人</h3>${group('diarize')}
+          <h3>轻量模式</h3>${group('light')}
           <h3>备用模型</h3>${group('backup')}
         </div>
       </section>
       <section class="sec" id="runtime">
-        <div><h2>运行环境</h2><p class="desc">所有模型都在显卡上运行。NVIDIA 显卡（驱动 580 以上）用 CUDA，其他显卡用 Vulkan。</p></div>
+        <div><h2>运行环境</h2><p class="desc">「自动」按显卡在已安装的运行库里挑：NVIDIA 显卡先试 CUDA 13、CUDA 12.6，其次 Vulkan；AMD、Intel 显卡用 Vulkan；都用不了时用 CPU。用不上显卡、显存不足时自动换下一个。手动指定的运行库用不了时，任务会停下并说明原因。</p></div>
         <div class="stack">
-          <div class="lab"><span>推理后端</span><div class="seg" role="group" aria-label="推理后端" style="align-self:flex-start">
-            <button type="button" class="${c.gpu_backend === 'cuda' ? 'on' : ''}" data-back="cuda">CUDA 13</button><button type="button" class="${c.gpu_backend === 'vulkan' ? 'on' : ''}" data-back="vulkan">Vulkan</button>
+          <div class="lab"><span>运行库</span><div class="seg" role="group" aria-label="运行库" style="align-self:flex-start;flex-wrap:wrap">
+            ${['auto', ...RT_KEYS].map((k) => `<button type="button" class="${c.gpu_backend === k ? 'on' : ''}" data-back="${k}">${k === 'auto' ? '自动' : RT_SHORT[k]}</button>`).join('')}
           </div></div>
-          <label class="lab"><span>运行库目录${ok.runtime ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${c.gpu_backend}" value="${esc(c['runtime_' + c.gpu_backend])}"></label>
+          ${(c.gpu_backend === 'auto' ? RT_KEYS.filter((k) => ok.runtimes[k]) : [c.gpu_backend]).map((k) => `<label class="lab"><span>${RT_SHORT[k]} 运行库目录${ok.runtimes[k] ? '' : '（找不到 crispasr.exe）'}</span><input class="field mono" data-cfg="runtime_${k}" value="${esc(c['runtime_' + k])}"></label>`).join('')}
+          ${c.gpu_backend === 'auto' && !ok.runtime ? '<p class="err">一个运行库都没有安装。</p>' : ''}
+          <label class="lab"><span>显卡编号（有多块显卡时）</span><input class="field mono" data-cfg="gpu_device" value="${esc(String(c.gpu_device ?? 'auto'))}" style="width:120px" title="auto 表示选显存最大的一块；也可以填检测结果里的编号"></label>
+          <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn sm" type="button" id="rtcheck">检测运行环境</button><button class="btn sm" type="button" id="bench">测试并选择最快后端</button></div>
+          <div id="rtres" class="small"></div>
+          <div id="benchres" class="small"></div>
           <label class="lab"><span>FFmpeg</span><input class="field mono" data-cfg="ffmpeg" value="${esc(c.ffmpeg)}"></label>
           <div><a class="btn sm" href="#setup">打开安装引导，下载运行库</a></div>
           <p class="faint small">字幕对照组 ${esc(c.version)}</p>
@@ -987,6 +1022,19 @@ async function renderSettings() {
   $$('[data-src]').forEach((s) => { s.onchange = () => { S.src = s.value; }; });
   watchDownloads();
   $$('[data-bk]').forEach((i) => { i.onchange = async () => { await api().set_backup(i.dataset.bk, i.dataset.lang, i.checked); S.cfg = await api().config(); }; });
+  $('#bench').onclick = async () => {
+    const r = await api().bench_start();
+    if (r.error) return toast(r.error);
+    watchBench();
+  };
+  watchBench();
+  $('#rtcheck').onclick = async () => {
+    const box = $('#rtres');
+    box.textContent = '正在检测，每个运行库要几秒……';
+    const r = await api().runtime_check();
+    box.innerHTML = r.rows.map((x) => `<div><b>${esc(x.label)}</b>：${x.ok ? esc(x.state) : `<span class="faint">${esc(x.state)}</span>`}${x.devices && x.devices.length ? `<br><span class="faint mono">${x.devices.map(esc).join('<br>')}</span>` : ''}</div>`).join('')
+      + `<p style="margin-top:8px">按现在的设置会用：<b>${esc(r.chosen)}</b></p>`;
+  };
   $$('[data-back]').forEach((b) => { b.onclick = async () => { await api().save_config({ gpu_backend: b.dataset.back }); showSys(b.dataset.back); renderSettings(); }; });
   $$('[data-pm]').forEach((b) => { b.onclick = async () => { await api().save_config({ proof_mode: b.dataset.pm }); renderSettings(); }; });
   if (agentMode()) return;
@@ -1032,19 +1080,24 @@ async function loadModels(c) {
 async function renderSetup() {
   const info = S.setup = await api().setup_info();
   const srcs = await api().sources();
+  const rsrcs = await api().runtime_sources();
+  if (!S.rsrc) S.rsrc = S.src === 'mirror' ? 'ghfast' : 'official';  // 模型选了国内镜像时，运行库也默认走国内镜像
   const g = info.gpu;
-  if (!S.pick) S.pick = g && g.cuda_ok ? 'cuda' : (info.runtimes.find((r) => r.installed) || { key: 'vulkan' }).key;
-  const gpuText = g
-    ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda_ok ? '推荐用 CUDA。' : '驱动低于 580，用不了 CUDA 13：先到 NVIDIA 官网更新驱动，或者选 Vulkan。')
-    : '没有检测到 NVIDIA 显卡，推荐用 Vulkan。';
-  const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
+  if (!S.pick) S.pick = (info.runtimes.find((r) => r.installed && r.key === info.recommend) || info.runtimes.find((r) => r.installed) || { key: info.recommend }).key;
+  const gpuText = (g
+    ? `检测到 ${esc(g.name)}，驱动版本 ${esc(g.driver)}。` + (g.cuda13 ? '推荐 CUDA 13。' : g.cuda12 ? '驱动低于 580，用不了 CUDA 13，推荐 CUDA 12.6。' : '驱动太老，CUDA 用不了：推荐 Vulkan，或者先到 NVIDIA 官网更新驱动。')
+    : '没有检测到 NVIDIA 显卡。AMD、Intel 显卡和核显用 Vulkan，没有显卡的电脑用 CPU' + (info.avx2 ? '' : '（这台电脑不支持 AVX2，用 CPU Legacy）') + '。')
+    + '运行时会自动检查选中的运行库能不能用上显卡，用不了时自动换另一个已安装的运行库。';
+  const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}${r.key === info.recommend ? '（推荐）' : ''}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
   const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono small" style="text-align:right">${m.installed ? '已安装' : bytes(m.size)}</span></div>`).join('');
   view.innerHTML = `
-  <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\Tingxie。</span></header>
+  <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\CaptionJury。</span></header>
   <div class="s-main" style="flex:1">
     <section class="sec">
       <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
-      <div class="stack">${rt}</div>
+      <div class="stack">${rt}
+        <label class="lab"><span>运行库下载来源（失败时自动换下一个；镜像下载的文件同样校验 SHA-256）</span><select class="field" id="rsrc" style="width:auto;min-width:260px">${rsrcs.map((s) => `<option value="${s.key}" ${s.key === S.rsrc ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
+      </div>
     </section>
     <section class="sec">
       <div><h2>2. 必装模型</h2><p class="desc">备用模型和说话人模型以后可以在设置里再下。</p></div>
@@ -1063,11 +1116,12 @@ async function renderSetup() {
   </div>`;
   $$('[name="rt"]').forEach((r) => { r.onchange = () => { S.pick = r.value; renderSetup(); }; });
   $('#msrc').onchange = (e) => { S.src = e.target.value; };
+  $('#rsrc').onchange = (e) => { S.rsrc = e.target.value; };
   $('#setgo').onclick = async () => {
     if (setupReady()) { S.firstRun = true; S.mode = 'fast'; location.hash = '#new'; return; }
-    await api().save_config({ gpu_backend: S.pick });
-    showSys(S.pick);
-    if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
+    await api().save_config({ gpu_backend: 'auto' });  // 下载哪个由用户选，跑的时候自动在已安装的里挑
+    showSys('auto');
+    if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, $('#rsrc').value);
     for (const m of S.setup.models) if (!m.installed) await api().download_model(m.name, $('#msrc').value);
     watchSetup();
   };
@@ -1111,10 +1165,62 @@ function route() {
   if (v === 'progress') renderProgress();
   else if (v === 'review') renderReview();
   else if (v === 'history') renderHistory();
+  else if (v === 'downloads') renderDownloads();
   else if (v === 'settings') renderSettings();
   else if (v === 'setup') renderSetup();
   else if (v === 'terms') renderTerms();
   else renderNew();
+}
+
+/* 下载页：正在下的、暂停的、排队的和最近完成或失败的，每秒刷新 */
+async function renderDownloads() {
+  clearTimeout(S.dlpT);
+  if (location.hash !== '#downloads') return;
+  const st = await api().download_status();
+  const cur = st.current;
+  const L = (n) => esc(st.labels[n] || (cur && cur.name === n ? cur.label : n));
+  const items = [];
+  if (cur) {
+    const pct = cur.total ? Math.min(100, cur.done / cur.total * 100) : 0;
+    const state = st.paused ? '已暂停' : cur.note && cur.note.startsWith('正在') ? esc(cur.note) : `${(cur.speed / 1e6).toFixed(1)} MB/s`;
+    items.push(`<div class="dl-item">
+      <div class="top"><b>${esc(cur.label)}</b><span class="mono small">${Math.floor(pct)}%　${bytes(cur.done)} / ${bytes(cur.total)}</span>
+        <span class="sp">${st.paused ? '<button class="btn sm solid" type="button" id="dlresume">继续</button>' : '<button class="btn sm" type="button" id="dlpause">暂停</button>'}<button class="btn sm ghost" type="button" data-dlcancel="${cur.name}">取消</button></span></div>
+      <div class="bar" aria-hidden="true"><i style="width:${pct}%"></i></div>
+      <div class="meta">${state}${cur.source ? '　来源：' + esc(cur.source) : ''}${cur.note && !cur.note.startsWith('正在') ? '<br>' + esc(cur.note) : ''}</div>
+    </div>`);
+  }
+  const queued = st.queue.filter((n) => !cur || n !== cur.name);
+  if (!cur && st.paused && queued.length) items.push(`<div class="top"><button class="btn sm solid" type="button" id="dlresume">继续下载</button></div>`);
+  if (queued.length) {
+    items.push(`<p class="dl-sec">排队中</p>` + queued.map((n) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="faint mono small">${bytes(st.sizes[n] || 0)}</span><span class="sp"><button class="btn sm ghost" type="button" data-dlcancel="${n}">取消</button></span></div></div>`).join(''));
+  }
+  const failed = Object.entries(st.failed);
+  if (failed.length) {
+    items.push(`<p class="dl-sec">没有完成</p>` + failed.map(([n, why]) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="sp"><button class="btn sm" type="button" data-dlretry="${n}">${why.includes('已取消') ? '重新下载' : '重试'}</button></span></div><div class="meta${why.includes('已取消') ? '' : ' err'}">${esc(why)}</div></div>`).join(''));
+  }
+  if (st.done.length) {
+    items.push(`<p class="dl-sec">这次打开程序后下完的</p>` + [...st.done].reverse().map((n) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="faint small">已完成</span></div></div>`).join(''));
+  }
+  const busy = cur || st.queue.length;
+  view.innerHTML = items.length ? `
+  <header class="pagehead"><h1>下载</h1><span class="faint small">下载中途关掉程序也没关系，下次再下会从断点接着下。</span>
+    ${busy ? '<span class="sp"><button class="btn sm ghost" type="button" id="dlall">全部取消</button></span>' : ''}</header>
+  <div class="dl-list">${items.join('')}</div>`
+    : `<div class="empty"><h2>没有正在下载的内容</h2><p>模型在设置的「本地模型」里下载，语音识别运行库在安装引导里下载。开始下载后可以在这里查看进度、暂停或取消。</p><div class="acts"><a class="btn solid" href="#settings">打开设置</a><a class="btn" href="#setup">打开安装引导</a></div></div>`;
+  const again = () => { clearTimeout(S.dlpT); renderDownloads(); };
+  if ($('#dlpause')) $('#dlpause').onclick = async () => { await api().pause_download(); again(); };
+  if ($('#dlresume')) $('#dlresume').onclick = async () => { await api().resume_download(); again(); };
+  if ($('#dlall')) $('#dlall').onclick = async () => { await api().cancel_download(); again(); };
+  $$('[data-dlcancel]').forEach((b) => { b.onclick = async () => { await api().cancel_download(b.dataset.dlcancel); again(); }; });
+  $$('[data-dlretry]').forEach((b) => {
+    b.onclick = async () => {
+      const n = b.dataset.dlretry;
+      await api().download_model(n, n.startsWith('runtime_') ? (S.rsrc || 'official') : (S.src || 'hf'));
+      again();
+    };
+  });
+  S.dlpT = setTimeout(renderDownloads, busy && !st.paused ? 1000 : 3000);
 }
 
 /* 下载进度：设置页打开、并且有下载在进行时每秒刷新一次 */
@@ -1145,8 +1251,34 @@ async function watchDownloads() {
   if (cur || st.queue.length) S.dlT = setTimeout(watchDownloads, 1000);
 }
 
+/* 设置页的测速结果：测速时每秒刷新 */
+async function watchBench() {
+  clearTimeout(S.benchT);
+  const box = $('#benchres');
+  if (!box) return;
+  const st = await api().bench_status();
+  const res = st.running || st.error ? st.results : (st.saved || {}).results || {};
+  const best = st.running ? null : st.fastest || (st.saved || {}).fastest;
+  const rows = Object.entries(res).map(([k, r]) => `<div>${k === best ? '<b>' : ''}${esc(RT_SHORT[k] || k)}：${r.error
+    ? `<span class="faint">${esc(r.error)}</span>`
+    : `常规 ${r.warm} 秒，第一次 ${r.first} 秒${k === best ? '（最快）' : ''}`}${k === best ? '</b>' : ''}</div>`).join('');
+  let head = '';
+  if (st.running) head = `<p>正在测速：${esc(st.note)}。用最近一个任务里的 30 秒音频，每个运行库跑 3 次。</p>`;
+  else if (st.error) head = `<p class="err">${esc(st.error)}</p>`;
+  else if (st.saved) head = st.valid
+    ? '<p>上次测速结果（自动模式会优先用最快的那个）：</p>'
+    : '<p class="faint">上次测速后显卡驱动、运行库或模型有变化，结果已作废，可以重新测一次：</p>';
+  box.innerHTML = head + rows;
+  const btn = $('#bench');
+  if (btn) btn.disabled = !!st.running;
+  if (st.running) S.benchT = setTimeout(watchBench, 1000);
+}
+
+const RT_KEYS = ['cuda', 'cuda12', 'vulkan', 'cpu', 'cpu_legacy'];
+const RT_SHORT = { cuda: 'CUDA 13', cuda12: 'CUDA 12.6', vulkan: 'Vulkan', cpu: 'CPU', cpu_legacy: 'CPU Legacy' };
+const RT_NAMES = { auto: '自动选择', cuda: 'GPU · CUDA 13', cuda12: 'GPU · CUDA 12.6', vulkan: 'GPU · Vulkan', cpu: 'CPU', cpu_legacy: 'CPU Legacy' };
 function showSys(backend) {
-  $('#sys').innerHTML = `${backend === 'cuda' ? 'GPU · CUDA 13' : 'GPU · Vulkan'}<br>字幕对照组 ${esc(S.cfg.version)}`;
+  $('#sys').innerHTML = `运行库：${esc(RT_NAMES[backend] || backend)}<br>字幕对照组 ${esc(S.cfg.version)}`;
 }
 
 async function poll() {
@@ -1158,6 +1290,9 @@ async function poll() {
     const badge = $('#navpct');  // 不在进度页时，导航上也能看到进度
     badge.hidden = !(s.running && s.current);
     if (s.running && s.current) badge.textContent = s.current.agent ? '待粘贴' : Math.floor(s.current.pct) + '%';
+    const dl = $('#navdl');  // 有下载时导航上显示进度
+    dl.hidden = !s.download.active;
+    if (s.download.active) dl.textContent = s.download.paused ? '暂停' : Math.floor(s.download.pct) + '%';
     const waiting = s.current && s.current.agent ? s.current.agent.k : null;  // 不在进度页时提醒一次
     if (waiting && waiting !== S.agentSeen && location.hash !== '#progress') toast('需要把提示词复制给 Agent', { label: '去进度页', fn: () => { location.hash = '#progress'; } });
     S.agentSeen = waiting;
@@ -1178,8 +1313,11 @@ async function boot() {
   showSys(S.cfg.gpu_backend);
   window.addEventListener('hashchange', route);
   const si = await api().setup_info();  // 运行库或必装模型缺了，先进引导页
-  if (!si.runtimes.find((r) => r.key === si.backend).installed || !si.models.every((m) => m.installed)) location.hash = '#setup';
+  const rtOk = si.backend === 'auto' ? si.runtimes.some((r) => r.installed) : (si.runtimes.find((r) => r.key === si.backend) || {}).installed;
+  if (!rtOk || !si.models.every((m) => m.installed)) location.hash = '#setup';
   window.addEventListener('resize', () => { if (location.hash === '#review' && S.job) drawWave(); });
+  const left = (await api().jobs()).filter((j) => !j.done && j.params);  // 上次没转写完的，提醒一次
+  if (left.length && location.hash !== '#setup') toast(`有 ${left.length} 个任务上次没有转写完，可以在历史里继续`, { label: '去历史', fn: () => { location.hash = '#history'; } });
   route();
   poll();
 }

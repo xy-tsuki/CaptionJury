@@ -10,7 +10,9 @@ import win32crypt
 
 from . import models
 
-HOME = Path(os.environ.get("TINGXIE_HOME") or Path(os.environ["LOCALAPPDATA"]) / "Tingxie")
+HOME = Path(os.environ.get("CAPTIONJURY_HOME") or Path(os.environ["LOCALAPPDATA"]) / "CaptionJury")
+# 改名前的数据目录，启动时把里面的东西搬到 HOME（_migrate）
+OLD_HOME = Path(os.environ["LOCALAPPDATA"]) / "Tingxie"
 JOBS = HOME / "jobs"
 CONFIG = HOME / "config.json"
 KEYFILE = HOME / "deepseek.key"  # DeepSeek 的密钥沿用原来的文件名，其他接口的放在 keys 目录
@@ -20,9 +22,10 @@ RUNTIME_DIR = HOME / "runtime"
 BUNDLED_FFMPEG = Path(sys.executable).parent / "ffmpeg" / "ffmpeg.exe"
 
 DEFAULTS = {
-    "gpu_backend": "cuda",
-    "runtime_cuda": str(RUNTIME_DIR / "crispasr-cuda13"),
-    "runtime_vulkan": str(RUNTIME_DIR / "crispasr-vulkan"),
+    # auto 按显卡自动挑（core/runtime.py），也可以是 models.RUNTIMES 里的某一个；gpu_device 是 auto 或显卡编号
+    "gpu_backend": "auto",
+    "gpu_device": "auto",
+    **{"runtime_" + k: str(RUNTIME_DIR / r["dir"]) for k, r in models.RUNTIMES.items()},
     "ffmpeg": "ffmpeg",
     **models.default_paths(MODELS_DIR),
     "backups": models.DEFAULT_BACKUPS,
@@ -40,11 +43,74 @@ DEFAULTS = {
     "diarize": False,
     "formats": ["SRT", "ASS"],
     "line_max": "wide",  # 导出时每条字幕的字数：wide 横屏、tall 竖屏、full 不限（subtitles.LINE_MAX）
-    "speed": {},
+    "speed": {},  # 各步骤的速度统计，旧版只有一份（都在 GPU 上跑）
+    "speed_rt": {},
+    "bench": {},  # 本机测速结果（core/bench.py），自动模式把实测最快的运行库排第一  # 按运行库分开的速度统计：运行库 -> 同 speed
 }
 
 
+def _fix_paths(o, old, new):
+    """把设置里以旧数据目录开头的路径改到新目录（不分大小写）。"""
+    if isinstance(o, dict):
+        return {k: _fix_paths(v, old, new) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_fix_paths(v, old, new) for v in o]
+    if isinstance(o, str):
+        low, base = o.lower(), str(old).lower()
+        if low == base or low.startswith(base + "\\") or low.startswith(base + "/"):
+            return str(new) + o[len(base):]
+    return o
+
+
+def migrate(old=None, new=None):
+    """把改名前的数据目录里的运行库、模型、设置、密钥和任务逐项移到新目录。
+
+    同一个盘里只是改名，不复制。新目录里已有同名项时不覆盖、留在旧目录；正被占用的
+    （比如正在运行的开发用 venv）移不动也留下。旧目录空了就删掉。返回没搬走的项。
+    """
+    old, new = Path(old or OLD_HOME), Path(new or HOME)
+    if not old.is_dir() or old.resolve() == new.resolve():
+        return []
+    new.mkdir(parents=True, exist_ok=True)
+    left = []
+    for item in old.iterdir():
+        dst = new / item.name
+        if dst.exists():
+            left.append(item.name)
+            continue
+        try:
+            os.replace(item, dst)
+        except OSError:
+            try:  # 不在同一个盘（新目录被指到别处）时复制过去再删
+                shutil.move(str(item), str(dst))
+            except OSError:
+                left.append(item.name)
+    cfg = new / "config.json"
+    if cfg.exists():
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+            fixed = _fix_paths(data, old, new)
+            if fixed != data:
+                cfg.write_text(json.dumps(fixed, ensure_ascii=False, indent=1), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+    try:
+        old.rmdir()  # 只有空了才删得掉
+    except OSError:
+        pass
+    return left
+
+
+_migrated = False
+
+
 def _ensure():
+    global _migrated
+    if not _migrated:
+        _migrated = True
+        # 指定了 CAPTIONJURY_HOME（测试用临时目录）时不碰旧目录
+        if not os.environ.get("CAPTIONJURY_HOME"):
+            migrate()
     JOBS.mkdir(parents=True, exist_ok=True)
 
 
@@ -60,6 +126,9 @@ def load_config():
         if "mode" not in saved and ("opt" in saved or "compare" in saved):  # 有模式之前的设置：按两个开关推出来
             opt, compare = saved.get("opt", True), saved.get("compare", saved.get("opt", True))
             saved["mode"] = "accurate" if opt and compare else "fast" if not opt and not compare else "custom"
+        # 有「自动」之前的设置：运行库是引导页按驱动版本替用户选的，改成自动；已有的运行库路径照旧保留
+        if "gpu_device" not in saved:
+            saved["gpu_backend"] = "auto"
         cfg.update(saved)
     # 去掉已经不支持的备用模型（Parakeet 在 2026-11-12 去掉了）；某种语言只勾了它的，改回默认
     backups = {}
@@ -81,6 +150,7 @@ def save_config(changes):
 
 def key_file(provider=None):
     """这个校对接口的密钥文件；不写接口时用设置里当前选的那个。"""
+    _ensure()
     provider = provider or load_config()["proof_provider"]
     if not provider.isalnum():
         raise ValueError("接口名不对")
@@ -92,7 +162,7 @@ def set_key(key, provider=None):
     _ensure()
     f = key_file(provider)
     f.parent.mkdir(parents=True, exist_ok=True)
-    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "Tingxie API key", None, None, None, 0)
+    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "CaptionJury API key", None, None, None, 0)
     f.write_bytes(blob)
 
 
@@ -127,6 +197,7 @@ def save_job(job):
 
 
 def load_job(jid):
+    _ensure()
     return json.loads((JOBS / jid / "job.json").read_text(encoding="utf-8"))
 
 
@@ -150,6 +221,9 @@ def list_jobs():
             "count": len(segs), "fix": sum(s.get("status") == "fix" for s in segs),
             "ask": sum(s.get("status") == "ask" for s in segs),
             "done": "written" in j, "written": j.get("written", []),
+            # 没做完的任务：running（跑着或程序被关掉）、stopped（用户取消）、failed（出错）；有 params 的才能接着跑
+            "state": j.get("state", "done" if "written" in j else "failed"), "error": j.get("error", ""),
+            "params": j.get("params"), "diarize": bool(j.get("speakers")) or bool((j.get("params") or {}).get("diarize")),
         })
     return sorted(out, key=lambda x: x["created"], reverse=True)
 

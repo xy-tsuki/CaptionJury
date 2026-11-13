@@ -2,6 +2,8 @@
 import array
 import ctypes
 import difflib
+import hashlib
+import os
 import json
 import queue
 import re
@@ -12,7 +14,7 @@ import uuid
 import wave
 from pathlib import Path
 
-from . import chunks, deepseek, lines, models, progress, sentences, speakers, store, subtitles
+from . import chunks, deepseek, lines, models, progress, runtime, sentences, speakers, store, subtitles
 
 NO_WINDOW = 0x08000000
 PUNCT = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -30,6 +32,38 @@ NAMES = {
 
 class Cancelled(Exception):
     pass
+
+
+def _fingerprint(*parts):
+    """断点续跑用的指纹：输入一样（命令、切块、模型文件大小……）才能沿用上次的结果。"""
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()[:24]
+
+
+def _reusable(d, out, key):
+    """out 是上次跑完的、并且输入和这次一样。key 文件只在这一步成功后才写，跑到一半的不会被沿用。"""
+    k = d / (out + ".key")
+    return (d / out).is_file() and k.is_file() and k.read_text(encoding="utf-8") == key
+
+
+def _mark(d, out, key):
+    (d / (out + ".key")).write_text(key, encoding="utf-8")
+
+
+def _unmark(d, out):
+    (d / (out + ".key")).unlink(missing_ok=True)
+
+
+def _file_sizes(cmd):
+    """命令里引用的模型文件的大小：同一路径换了文件也能看出来。"""
+    return [os.path.getsize(a) for a in cmd if isinstance(a, str) and a.lower().endswith((".gguf", ".bin")) and os.path.isfile(a)]
+
+
+class ProcFailed(RuntimeError):
+    """子进程非零退出；带上退出码和 stderr 最后几十行，用来判断是不是运行库或显卡的问题。"""
+
+    def __init__(self, msg, code, tail):
+        super().__init__(msg)
+        self.code, self.tail = code, tail
 
 
 class Skipped(Exception):
@@ -128,7 +162,8 @@ class Queue:
         return now - self.paused_for - ((now - self.paused_at) if self.paused_at else 0)
 
     # ---------- control ----------
-    def start(self, files, lang, opt, formats, diarize=False, compare=False, terms=()):
+    def start(self, files, lang, opt, formats, diarize=False, compare=False, terms=(), resume=None, light=False):
+        """开始转写一串文件。resume 是没跑完的任务编号：第一个文件沿用那个任务的目录，跑过的步骤不重跑。"""
         if self.state["running"]:
             raise RuntimeError("已有任务正在运行")
         self.cancel = False
@@ -138,6 +173,8 @@ class Queue:
             "running": True, "error": None, "finished": None, "current": None,
             "queue": [Path(f).name for f in files], "index": 0, "total": len(files), "done": [], "queue_pct": 0,
         }
+        self.resume_id = resume
+        self.light = light  # 轻量模式：主模型换成 Qwen3-ASR 0.6B，不做对照、AI 校对和说话人区分
         self.thread = threading.Thread(target=self._run, args=(files, lang, opt, formats, diarize, compare, list(terms)), daemon=True)
         self.thread.start()
 
@@ -176,17 +213,32 @@ class Queue:
             self.durations = [_duration(cfg, f) or 1.0 for f in files]
             for i, f in enumerate(files):
                 self.state["index"] = i
-                job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare, terms)
+                job = self._one(f, lang, opt, formats, self.durations[i], diarize, compare, terms,
+                                rest=list(files[i + 1:]), resume=self.resume_id if i == 0 else None, light=self.light)
                 self.state["done"].append(job["id"])
             self.state["queue_pct"] = 100
             self.state["finished"] = self.state["done"][-1] if self.state["done"] else None
         except Cancelled:
             self.state["error"] = None
+            self._interrupted("stopped", "")
         except Exception as e:  # shown on the progress page
             self.state["error"] = str(e)
+            self._interrupted("failed", str(e))
         finally:
             self.proc = None
             self.state["running"] = False
+
+    def _interrupted(self, state, error):
+        """任务停下或出错：记进任务文件，历史页可以从这里接着跑。"""
+        job = getattr(self, "job", None)
+        if not job or job.get("state") != "running":
+            return
+        try:
+            saved = store.load_job(job["id"])  # 存盘的版本，内存里的可能改到一半
+        except (OSError, ValueError):
+            return
+        saved.update(state=state, error=error[:300])
+        store.save_job(saved)
 
     def _ticker(self):
         while self.state["running"]:
@@ -199,14 +251,26 @@ class Queue:
             time.sleep(0.25)
 
     # ---------- one file ----------
-    def _one(self, source, lang, opt, formats, duration, diarize, compare=False, terms=()):
+    def _one(self, source, lang, opt, formats, duration, diarize, compare=False, terms=(), rest=(), resume=None, light=False):
         cfg = store.load_config()
+        if light:
+            opt = compare = diarize = False
+        self.main = "qwen06" if light else "qwen"
+        # 只要纯文本时不用逐字时间；轻量模式下省掉对齐模型（字幕格式要时间轴，照常对齐）
+        self.align = not (light and set(formats) <= {"TXT"})
         # 新建页的词库只对这次转写生效：并进设置里的术语表，Qwen 提示和校对都用它
         cfg["glossary"] = "\n".join(dict.fromkeys(deepseek.glossary(cfg) + list(terms)))
-        jid, d = store.new_job_dir()
+        if resume:  # 接着跑：沿用原来的目录、编号和创建时间，目录里已有的结果按指纹沿用
+            jid, d, created = resume, store.JOBS / resume, store.load_job(resume)["created"]
+        else:
+            (jid, d), created = store.new_job_dir(), time.time()
         src = Path(source)
         job = {
-            "id": jid, "source": str(src), "name": src.name, "created": time.time(),
+            "id": jid, "source": str(src), "name": src.name, "created": created, "state": "running",
+            # 接着跑时照原样再来一遍要用的参数；rest 是排在它后面、还没开始的文件
+            "params": {"lang": lang, "opt": opt, "formats": list(formats), "diarize": diarize, "compare": compare,
+                       "terms": list(terms), "rest": list(rest), "light": light},
+            "light": light,
             "lang": lang, "opt": opt, "compare": compare, "terms": list(terms), "duration": 0, "segments": [], "warnings": [], "speakers": {}, "speaker_tags": False, "no_punct": False,
             "line_max": cfg.get("line_max", "wide"),
         }
@@ -223,10 +287,16 @@ class Queue:
         if opt:
             keys.append("qwen2")
             keys.append("deepseek")
-        self.tracker = progress.Tracker(keys, duration, self.state["current"], cfg["speed"], self._clock)
+        self.job = job
+        store.save_job(job)  # 先存一份：程序中途被关掉，历史页也能看到它、接着跑
+        self._pick_runtime(cfg, job)
+        rates = cfg.get("speed_rt", {}).get(self.rt["key"] + ("_light" if light else "")) or (cfg["speed"] if self.rt["gpu"] and not light else {})
+        self.tracker = progress.Tracker(keys, duration, self.state["current"], rates, self._clock)
         self.extras = []  # Qwen 没识别出、其他模型听到的段落；开了 AI 校对时校对前插进去交给 AI，否则最后插成存疑字幕
         for lane in self.state["current"]["lanes"]:
             lane["name"] = NAMES[lane["key"]]
+            if light and lane["key"] == "qwen":
+                lane["name"] = "Qwen3-ASR 0.6B"
 
         self._extract(cfg, src, d, job)
         slices = self._segment(cfg, d)
@@ -240,7 +310,7 @@ class Queue:
         qwen, words = self._asr(cfg, "qwen", d, slices, asr_lang, context=_hint(deepseek.glossary(cfg)))
         who = speakers.resolve(qwen, *turns) if turns else None
         segs = sentences.build(sentences.stitch(slices, qwen, words, who), lang)
-        if not any(words.values()):
+        if not any(words.values()) and self.align:  # 轻量模式只要 TXT 时故意不对齐，不用提醒
             job["warnings"].append("没有拿到逐字时间，字幕时间是按字数估算的")
         else:
             lost = [slices[i][:2] for i in sorted(words) if sentences.lost_alignment(words[i])]
@@ -298,12 +368,25 @@ class Queue:
         moved = [p for p in job["written"] if Path(p).parent != Path(job["source"]).parent]
         if moved:
             job["warnings"].append(f"源文件所在的文件夹没有写入权限，字幕存到了 {Path(moved[0]).parent}")
+        job["state"] = "done"
         store.save_job(job)
-        store.save_config({"speed": self.tracker.rates})
+        if self.rt["key"] == self.rt_first:  # 中途换过运行库时速度混在一起，不记；轻量模式单独记
+            store.save_config({"speed_rt": cfg.get("speed_rt", {}) | {self.rt["key"] + ("_light" if light else ""): self.tracker.rates}})
         return job
 
     def _extract(self, cfg, src, d, job):
         t = self.tracker
+        st = src.stat()
+        key = _fingerprint("extract", str(src), st.st_size, st.st_mtime)
+        if _reusable(d, "audio.wav", key) and (d / "peaks.json").is_file():
+            t.reused.add("extract")
+            with wave.open(str(d / "audio.wav")) as w:
+                job["duration"] = w.getnframes() / 16000
+            store.save_job(job)
+            self.state["current"]["duration"] = job["duration"]
+            t.finish("extract")
+            return
+        _unmark(d, "audio.wav")
         t.set("extract", 1)
         total = t.audio["extract"]
         t.creep("extract", 90, t.predicted("extract"))  # covers sources whose length ffprobe cannot read
@@ -333,16 +416,53 @@ class Queue:
                     chunk = a[i:i + step]
                     peaks.append(min(100, max(max(chunk), -min(chunk)) * 100 // 16000))
         (d / "peaks.json").write_text(json.dumps(peaks), encoding="utf-8")
+        _mark(d, "audio.wav", key)
         store.save_job(job)
         self.state["current"]["duration"] = job["duration"]
         t.finish("extract")
 
+    def _pick_runtime(self, cfg, job, failed=None):
+        """选运行库和显卡（runtime.pick），把实际设备写进任务状态和任务文件。"""
+        self.rt = runtime.pick(cfg, failed, self.main)
+        self.rt_failed = dict(failed or {})
+        if failed is None:
+            self.rt_first = self.rt["key"]
+        job["device"] = self.state["current"]["device"] = runtime.describe(self.rt)
+        job["runtime"] = self.rt["key"]
+
     def _base(self, cfg):
-        runtime = Path(cfg["runtime_" + cfg["gpu_backend"]])
-        return [str(runtime / "crispasr.exe"), "--gpu-backend", cfg["gpu_backend"]]
+        rt = self.rt
+        cmd = [str(runtime.exe(cfg, rt["key"])), "--gpu-backend", rt["backend"]]
+        if rt["device"] is not None:
+            cmd += ["-dev", str(rt["device"])]
+        if not rt["gpu"]:
+            cmd += ["-t", str(runtime.threads())]
+        return cmd
+
+    def _crispasr(self, cfg, args, cwd, on_err=None):
+        """运行一次 crispasr（命令开头的运行库部分由这里加）。
+
+        自动模式下，运行库或显卡出问题（初始化失败、显存不足、程序起不来）时换下一个运行库，从头重跑这一步。
+        """
+        while True:
+            try:
+                return self._spawn(self._base(cfg) + args, cwd, on_err)
+            except ProcFailed as e:
+                why = runtime.failure(e.code, e.tail)
+                if not why or cfg.get("gpu_backend", "auto") != "auto":
+                    if why:
+                        raise RuntimeError(f"{e}。{self.rt['label']} {why}，可以在设置里把运行库改成「自动」") from e
+                    raise
+                bad = self.rt["key"]
+                failed = self.rt_failed | {bad: why}
+                try:
+                    self._pick_runtime(cfg, self.job, failed)
+                except RuntimeError:
+                    raise RuntimeError(f"{e}。已经没有可换的运行库（" + "；".join(f"{runtime.label(k)} {v}" for k, v in failed.items()) + "）") from e
+                self.state["current"].setdefault("warnings", []).append(f"{runtime.label(bad)} {why}，改用 {self.rt['label']} 重跑")
 
     def _model_args(self, cfg, key):
-        return models.args(cfg, "qwen" if key == "qwen2" else key)
+        return models.args(cfg, self.main if key in ("qwen", "qwen2") else key)
 
     def _spawn(self, cmd, cwd, on_err=None, on_out=None, what="语音识别进程退出"):
         self._check()
@@ -368,17 +488,23 @@ class Queue:
         self.proc = None
         self._check()
         if p.returncode:
-            raise RuntimeError(f"{what}（{p.returncode}）：" + " / ".join(x for x in tail[-3:] if x)[:400])
+            raise ProcFailed(f"{what}（{p.returncode}）：" + " / ".join(x for x in tail[-3:] if x)[:400], p.returncode, list(tail))
 
     def _segment(self, cfg, d):
         t = self.tracker
         t.set("vad", 1)
         t.creep("vad", 97, t.predicted("vad"))  # CrispASR reports nothing during detection, so this bar is estimated
         # 人声检测只用 CrispASR 自带的 webrtc，和加载哪个模型无关
-        cmd = self._base(cfg) + self._model_args(cfg, "qwen") + [
+        args = self._model_args(cfg, "qwen") + [
             "-f", "audio.wav", "--vad", "-vm", "webrtc", "-vsd", "300", "-vmsd", "28", "--strict-pipeline", "--vad-export", "seg.json",
         ]
-        self._spawn(cmd, d)
+        key = _fingerprint(args, (d / "audio.wav.key").read_text(encoding="utf-8"))
+        if _reusable(d, "seg.json", key):
+            t.reused.add("vad")
+        else:
+            _unmark(d, "seg.json")
+            self._crispasr(cfg, args, d)
+            _mark(d, "seg.json", key)
         data = json.loads((d / "seg.json").read_text(encoding="utf-8"))
         v = data["crispasr_vad"]
         self.seg_doc = data
@@ -428,10 +554,21 @@ class Queue:
                 if n < len(lengths):
                     t.creep(key, at(n + 1), lengths[n] * rate)
 
-        cmd = self._base(cfg) + self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
-        self._spawn(cmd, d, line)
-        if not on_gpu[0]:
-            self.state["current"].setdefault("warnings", []).append(f"{NAMES[key]} 没有用上 GPU")
+        cmd = self._model_args(cfg, key) + ["-f", "audio.wav", "--vad-import", seg_file.name, "-pp", "-ojf", "-of", f"out_{name}"] + args
+        out = f"out_{name}.json"
+        # 带上抽音频那一步的指纹：源文件换了、切块碰巧一样时，也不能沿用旧的识别结果
+        audio_fp = (d / "audio.wav.key").read_text(encoding="utf-8")
+        fp = _fingerprint(cmd, seg_file.read_text(encoding="utf-8"), _file_sizes(cmd), audio_fp)
+        if _reusable(d, out, fp):  # 上次已经跑完这一步
+            t.reused.add(key)
+            t.sim = None
+            t.set(key, at(len(lengths)), "沿用上次结果")
+            return json.loads((d / out).read_text(encoding="utf-8"))["transcription"]
+        _unmark(d, out)
+        self._crispasr(cfg, cmd, d, line)
+        _mark(d, out, fp)
+        if self.rt["gpu"] and not on_gpu[0]:
+            self.state["current"].setdefault("warnings", []).append(f"{NAMES[key]} 没有用上 {self.rt['label']}，实际在 CPU 上运行")
         return json.loads((d / f"out_{name}.json").read_text(encoding="utf-8"))["transcription"]
 
     def _moss(self, cfg, d, slices, lang, job):
@@ -463,7 +600,7 @@ class Queue:
         """Runs one model over these chunks; returns text and timed characters, keyed by chunk index."""
         idx = list(range(len(slices))) if only is None else only
         args = ["-l", lang]
-        if key in ("qwen", "qwen2") and Path(cfg["aligner_model"]).exists():
+        if key in ("qwen", "qwen2") and self.align and Path(cfg["aligner_model"]).exists():
             args += ["-am", cfg["aligner_model"]]
         if key in ("qwen", "qwen2") and context:
             args += ["--context", context]
@@ -576,13 +713,22 @@ class Queue:
         name = deepseek.label(cfg)
         t.set("deepseek", 2, "生成大纲")
         t.creep("deepseek", 40, t.predicted("deepseek") * 0.4, "生成大纲")
+        d = store.JOBS / job["id"]
+        fp = _fingerprint("outline", segs, Path(job["name"]).stem, deepseek.glossary(cfg))
         try:
-            chat = self._chat(cfg, "outline")
-            if isinstance(chat, _Agent):
-                job["outline"], terms = deepseek.outline(cfg, chat, segs, Path(job["name"]).stem)
+            if _reusable(d, "ai_outline.json", fp):  # 上次已经拿到大纲：不再花钱、不用再粘贴
+                saved = json.loads((d / "ai_outline.json").read_text(encoding="utf-8"))
+                job["outline"], terms = saved["outline"], saved["terms"]
             else:
-                with chat:
+                _unmark(d, "ai_outline.json")
+                chat = self._chat(cfg, "outline")
+                if isinstance(chat, _Agent):
                     job["outline"], terms = deepseek.outline(cfg, chat, segs, Path(job["name"]).stem)
+                else:
+                    with chat:
+                        job["outline"], terms = deepseek.outline(cfg, chat, segs, Path(job["name"]).stem)
+                (d / "ai_outline.json").write_text(json.dumps({"outline": job["outline"], "terms": terms}, ensure_ascii=False), encoding="utf-8")
+                _mark(d, "ai_outline.json", fp)
         except Skipped:  # 跳过大纲：校对照常做，只是没有大纲和术语提示
             job["outline"] = ""
             t.set("deepseek", 40, "等待校对")
@@ -645,13 +791,22 @@ class Queue:
         cur["stream"], cur["stream_name"] = [], f"{name} 校对"
         t.set("deepseek", 40, "全文校对")
         t.creep("deepseek", 98, t.predicted("deepseek") * 0.6, "全文校对")
+        d = store.JOBS / job["id"]
+        fp = _fingerprint("proof", segs, job["outline"], Path(job["name"]).stem, deepseek.glossary(cfg))
         try:
-            chat = self._chat(cfg, "proof")
-            if isinstance(chat, _Agent):
-                items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"], Path(job["name"]).stem)
+            if _reusable(d, "ai_proof.json", fp):
+                saved = json.loads((d / "ai_proof.json").read_text(encoding="utf-8"))
+                items, dropped = saved["items"], saved["dropped"]
             else:
-                with chat:
+                _unmark(d, "ai_proof.json")
+                chat = self._chat(cfg, "proof")
+                if isinstance(chat, _Agent):
                     items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"], Path(job["name"]).stem)
+                else:
+                    with chat:
+                        items, dropped = deepseek.proofread(cfg, chat, segs, job["outline"], Path(job["name"]).stem)
+                (d / "ai_proof.json").write_text(json.dumps({"items": items, "dropped": dropped}, ensure_ascii=False), encoding="utf-8")
+                _mark(d, "ai_proof.json", fp)
         except Skipped:
             job["warnings"].append("跳过了 AI 校对，保留的是 Qwen 的识别结果")
             t.finish("deepseek", "已跳过", learn=False)

@@ -2,8 +2,8 @@
 import json, os, shutil, sys, tempfile, time
 from pathlib import Path
 
-saved = Path(os.environ["LOCALAPPDATA"]) / "Tingxie"
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
+saved = Path(os.environ["LOCALAPPDATA"]) / "CaptionJury"
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp(prefix="captionjury-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 from core import deepseek, pipeline, store

@@ -1,8 +1,7 @@
 ﻿; Inno Setup 安装包脚本（需要 Inno Setup 6.5 以上）。由 packaging/build.ps1 调用：
 ;   ISCC.exe /DAppVersion=0.1.0 /DSrc=<dist 目录> /DOut=<输出目录> packaging\installer.iss
 ; 安装时让用户选"只为我安装"（默认，不需要管理员）或"为所有用户安装"。
-; 程序本身装在安装目录；模型、运行库、设置和任务都在 %LOCALAPPDATA%\Tingxie，卸载时询问是否删除。
-; 旧名「听写 / Tingxie」：AppId 和数据目录沿用，升级时装在原来的目录里，旧的快捷方式和 Tingxie.exe 删掉。
+; 程序本身装在安装目录；模型、运行库、设置和任务都在 %LOCALAPPDATA%\CaptionJury，卸载时询问是否删除。
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -50,10 +49,6 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [InstallDelete]
 ; 升级时先清掉旧版本的依赖文件，免得残留
 Type: filesandordirs; Name: "{app}\_internal"
-; 改名前（听写 / Tingxie）留下的程序和快捷方式
-Type: files; Name: "{app}\Tingxie.exe"
-Type: files; Name: "{autoprograms}\听写.lnk"
-Type: files; Name: "{autodesktop}\听写.lnk"
 
 [Files]
 ; build\dist\CaptionJury 的结构和安装后一样：CaptionJury.exe、_internal、ffmpeg、licenses
@@ -94,7 +89,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    Data := ExpandConstant('{localappdata}\Tingxie');
+    Data := ExpandConstant('{localappdata}\CaptionJury');
     if DirExists(Data) and not UninstallSilent then
       if MsgBox('是否同时删除下载的模型、运行库、设置和转写记录？' #13#10#13#10 + Data + #13#10#13#10 +
                 '选"否"会保留这些文件，重新安装后可以直接使用。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
