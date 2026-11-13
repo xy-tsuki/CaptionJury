@@ -10,7 +10,9 @@ import win32crypt
 
 from . import models
 
-HOME = Path(os.environ.get("TINGXIE_HOME") or Path(os.environ["LOCALAPPDATA"]) / "Tingxie")
+HOME = Path(os.environ.get("CAPTIONJURY_HOME") or Path(os.environ["LOCALAPPDATA"]) / "CaptionJury")
+# 改名前的数据目录，启动时把里面的东西搬到 HOME（_migrate）
+OLD_HOME = Path(os.environ["LOCALAPPDATA"]) / "Tingxie"
 JOBS = HOME / "jobs"
 CONFIG = HOME / "config.json"
 KEYFILE = HOME / "deepseek.key"  # DeepSeek 的密钥沿用原来的文件名，其他接口的放在 keys 目录
@@ -47,7 +49,68 @@ DEFAULTS = {
 }
 
 
+def _fix_paths(o, old, new):
+    """把设置里以旧数据目录开头的路径改到新目录（不分大小写）。"""
+    if isinstance(o, dict):
+        return {k: _fix_paths(v, old, new) for k, v in o.items()}
+    if isinstance(o, list):
+        return [_fix_paths(v, old, new) for v in o]
+    if isinstance(o, str):
+        low, base = o.lower(), str(old).lower()
+        if low == base or low.startswith(base + "\\") or low.startswith(base + "/"):
+            return str(new) + o[len(base):]
+    return o
+
+
+def migrate(old=None, new=None):
+    """把改名前的数据目录里的运行库、模型、设置、密钥和任务逐项移到新目录。
+
+    同一个盘里只是改名，不复制。新目录里已有同名项时不覆盖、留在旧目录；正被占用的
+    （比如正在运行的开发用 venv）移不动也留下。旧目录空了就删掉。返回没搬走的项。
+    """
+    old, new = Path(old or OLD_HOME), Path(new or HOME)
+    if not old.is_dir() or old.resolve() == new.resolve():
+        return []
+    new.mkdir(parents=True, exist_ok=True)
+    left = []
+    for item in old.iterdir():
+        dst = new / item.name
+        if dst.exists():
+            left.append(item.name)
+            continue
+        try:
+            os.replace(item, dst)
+        except OSError:
+            try:  # 不在同一个盘（新目录被指到别处）时复制过去再删
+                shutil.move(str(item), str(dst))
+            except OSError:
+                left.append(item.name)
+    cfg = new / "config.json"
+    if cfg.exists():
+        try:
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+            fixed = _fix_paths(data, old, new)
+            if fixed != data:
+                cfg.write_text(json.dumps(fixed, ensure_ascii=False, indent=1), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+    try:
+        old.rmdir()  # 只有空了才删得掉
+    except OSError:
+        pass
+    return left
+
+
+_migrated = False
+
+
 def _ensure():
+    global _migrated
+    if not _migrated:
+        _migrated = True
+        # 指定了 CAPTIONJURY_HOME（测试用临时目录）时不碰旧目录
+        if not os.environ.get("CAPTIONJURY_HOME"):
+            migrate()
     JOBS.mkdir(parents=True, exist_ok=True)
 
 
@@ -87,6 +150,7 @@ def save_config(changes):
 
 def key_file(provider=None):
     """这个校对接口的密钥文件；不写接口时用设置里当前选的那个。"""
+    _ensure()
     provider = provider or load_config()["proof_provider"]
     if not provider.isalnum():
         raise ValueError("接口名不对")
@@ -98,7 +162,7 @@ def set_key(key, provider=None):
     _ensure()
     f = key_file(provider)
     f.parent.mkdir(parents=True, exist_ok=True)
-    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "Tingxie API key", None, None, None, 0)
+    blob = win32crypt.CryptProtectData(key.strip().encode("utf-8"), "CaptionJury API key", None, None, None, 0)
     f.write_bytes(blob)
 
 
@@ -133,6 +197,7 @@ def save_job(job):
 
 
 def load_job(jid):
+    _ensure()
     return json.loads((JOBS / jid / "job.json").read_text(encoding="utf-8"))
 
 

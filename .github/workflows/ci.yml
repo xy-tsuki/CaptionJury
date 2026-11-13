@@ -21,3 +21,4 @@ jobs:
       - run: python tests/deepseek_unit.py
       - run: python tests/backups_unit.py
       - run: python tests/download_unit.py
+      - run: python tests/migrate_unit.py

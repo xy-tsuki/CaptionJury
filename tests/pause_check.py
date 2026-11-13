@@ -1,6 +1,6 @@
 """Pausing must freeze the bar and the clock; cancelling must stop the run."""
 import os, sys, tempfile, time
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp(prefix="captionjury-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import pipeline
 import local_models

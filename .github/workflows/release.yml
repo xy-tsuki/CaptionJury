@@ -41,6 +41,7 @@ jobs:
           python tests/align_unit.py
           python tests/runtime_unit.py
           python tests/resume_unit.py
+          python tests/migrate_unit.py
 
       - name: 准备 Inno Setup 6.5 以上
         shell: pwsh

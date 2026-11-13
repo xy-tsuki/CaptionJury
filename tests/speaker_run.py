@@ -4,7 +4,7 @@ Usage: speaker_run.py LANG AUDIO [AUDIO ...]. Subtitles are written next to AUDI
 """
 import collections, os, sys, tempfile, time
 
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp(prefix="captionjury-test-")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8")
 from core import pipeline, store

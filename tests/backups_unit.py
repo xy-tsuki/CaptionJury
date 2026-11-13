@@ -44,7 +44,7 @@ assert models.backups_for(dict(cfg, backups={}), "ja") == ["whisper"]  # nothing
 
 # 设置里还留着已经去掉的模型（parakeet）时，读设置会把它去掉；某种语言只剩它的，改回默认。
 import json, os, tempfile
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp(prefix="tingxie-test-")
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp(prefix="captionjury-test-")
 import importlib
 from core import store
 importlib.reload(store)

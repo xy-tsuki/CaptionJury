@@ -4,7 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-os.environ["TINGXIE_HOME"] = tempfile.mkdtemp()
+os.environ["CAPTIONJURY_HOME"] = tempfile.mkdtemp()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import runtime  # noqa: E402

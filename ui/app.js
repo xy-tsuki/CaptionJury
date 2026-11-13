@@ -1091,7 +1091,7 @@ async function renderSetup() {
   const rt = info.runtimes.map((r) => `<label class="rt check mcard"><input type="radio" name="rt" value="${r.key}" ${S.pick === r.key ? 'checked' : ''}><b>${esc(r.label)}${r.key === info.recommend ? '（推荐）' : ''}　<span class="faint mono small">${r.installed ? '已安装' : bytes(r.size)}</span></b><p>${esc(r.desc)}</p></label>`).join('');
   const mods = info.models.map((m) => `<div class="mrow" style="grid-template-columns:minmax(0,1fr) 90px"><span>${esc(m.label)}</span><span class="faint mono small" style="text-align:right">${m.installed ? '已安装' : bytes(m.size)}</span></div>`).join('');
   view.innerHTML = `
-  <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\Tingxie。</span></header>
+  <header class="pagehead"><h1>第一次使用</h1><span class="faint small">识别在本机显卡上运行，需要先下载语音识别运行库和两个必装模型，文件放在 %LOCALAPPDATA%\\CaptionJury。</span></header>
   <div class="s-main" style="flex:1">
     <section class="sec">
       <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
