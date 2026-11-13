@@ -106,9 +106,9 @@ class Downloader:
                 return self.status()
             self.queue.append(name)
             self.state["failed"].pop(name, None)
-            self._sources[name] = [source] + [s for s in models.SOURCES if s != source]
-            if name.startswith("runtime_"):
-                self._sources[name] = ["official"]
+            pool = models.RUNTIME_SOURCES if name.startswith("runtime_") else models.SOURCES
+            source = source if source in pool else next(iter(pool))
+            self._sources[name] = [source] + [s for s in pool if s != source]
             self._cancel = False
             if not self._thread or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._run, daemon=True)
@@ -177,7 +177,7 @@ class Downloader:
         for f, dest in files:
             errors = []
             for source in self._sources[name]:
-                label = models.SOURCES.get(source, models.RUNTIME_SOURCE)
+                label = models.SOURCES.get(source) or models.RUNTIME_SOURCES[source]
                 cur["source"] = label
                 if errors:
                     cur["note"] = "；".join(errors) + f"。已改用{label}"

@@ -139,4 +139,19 @@ d = Path(cfg["runtime_vulkan"])
 assert sorted(p.name for p in d.iterdir()) == ["crispasr.exe", "ggml.dll"], list(d.iterdir())
 assert not any(p.suffix in (".zip", ".part") or p.name.endswith(".unzip") for p in d.parent.iterdir()), list(d.parent.iterdir())
 rt.clear(); rt.update(real_rt)
+
+# 8. 运行库的加速镜像：地址是镜像前缀加官方地址；选了镜像先试它，其余来源依次排在后面
+f = models.RUNTIMES["cuda12"]["file"]
+assert models.urls(f, "official") == [f["url"]]
+assert models.urls(f, "ghfast") == ["https://ghfast.top/" + f["url"]]
+import threading
+hold = threading.Event()
+dl._thread = threading.Thread(target=hold.wait, daemon=True)  # 占着下载线程，add 只排队、不真的下载
+dl._thread.start()
+dl.add("runtime_cuda12", "ghproxy")
+assert dl._sources["runtime_cuda12"][0] == "ghproxy" and set(dl._sources["runtime_cuda12"]) == set(models.RUNTIME_SOURCES)
+dl.add("runtime_cpu", "hf")  # 模型的来源名对运行库无效：从官方开始
+assert dl._sources["runtime_cpu"][0] == "official"
+dl.cancel()
+hold.set()
 print("all passed")

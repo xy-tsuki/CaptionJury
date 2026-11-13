@@ -1051,6 +1051,8 @@ async function loadModels(c) {
 async function renderSetup() {
   const info = S.setup = await api().setup_info();
   const srcs = await api().sources();
+  const rsrcs = await api().runtime_sources();
+  if (!S.rsrc) S.rsrc = S.src === 'mirror' ? 'ghfast' : 'official';  // 模型选了国内镜像时，运行库也默认走国内镜像
   const g = info.gpu;
   if (!S.pick) S.pick = (info.runtimes.find((r) => r.installed && r.key === info.recommend) || info.runtimes.find((r) => r.installed) || { key: info.recommend }).key;
   const gpuText = (g
@@ -1064,7 +1066,9 @@ async function renderSetup() {
   <div class="s-main" style="flex:1">
     <section class="sec">
       <div><h2>1. 运行库</h2><p class="desc">${gpuText}</p></div>
-      <div class="stack">${rt}</div>
+      <div class="stack">${rt}
+        <label class="lab"><span>运行库下载来源（失败时自动换下一个；镜像下载的文件同样校验 SHA-256）</span><select class="field" id="rsrc" style="width:auto;min-width:260px">${rsrcs.map((s) => `<option value="${s.key}" ${s.key === S.rsrc ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select></label>
+      </div>
     </section>
     <section class="sec">
       <div><h2>2. 必装模型</h2><p class="desc">备用模型和说话人模型以后可以在设置里再下。</p></div>
@@ -1083,11 +1087,12 @@ async function renderSetup() {
   </div>`;
   $$('[name="rt"]').forEach((r) => { r.onchange = () => { S.pick = r.value; renderSetup(); }; });
   $('#msrc').onchange = (e) => { S.src = e.target.value; };
+  $('#rsrc').onchange = (e) => { S.rsrc = e.target.value; };
   $('#setgo').onclick = async () => {
     if (setupReady()) { S.firstRun = true; S.mode = 'fast'; location.hash = '#new'; return; }
     await api().save_config({ gpu_backend: 'auto' });  // 下载哪个由用户选，跑的时候自动在已安装的里挑
     showSys('auto');
-    if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, 'official');
+    if (!pickedRuntime().installed) await api().download_model('runtime_' + S.pick, $('#rsrc').value);
     for (const m of S.setup.models) if (!m.installed) await api().download_model(m.name, $('#msrc').value);
     watchSetup();
   };

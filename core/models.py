@@ -87,7 +87,15 @@ RUNTIMES = {
     "cpu_legacy": _rt("CPU Legacy", "CPU Legacy", "crispasr-cpu-legacy", "不支持 AVX2 的老电脑用，最慢。", False, "cpu",
                       "crispasr-windows-x86_64-cpu-legacy.zip", 8836447, "4f5d6ef087a6bd6ba5d88fcecb4485320a88c7b762aee1a4b856350484f39ba7"),
 }
-RUNTIME_SOURCE = "CrispASR 官方 GitHub"
+# 运行库的下载来源：官方 GitHub，以及几个 GitHub 加速镜像（第三方服务，中国大陆下载快）。
+# 镜像只是转发官方文件，下完一样按 SHA-256 校验，内容对不上就删掉重下，不会装上被改过的文件。
+RUNTIME_SOURCES = {
+    "official": "CrispASR 官方 GitHub",
+    "ghfast": "ghfast.top 加速镜像（中国大陆）",
+    "ghproxy": "gh-proxy.com 加速镜像（中国大陆）",
+    "ghproxynet": "ghproxy.net 加速镜像（中国大陆）",
+}
+GH_PROXIES = {"ghfast": "https://ghfast.top/", "ghproxy": "https://gh-proxy.com/", "ghproxynet": "https://ghproxy.net/"}
 for _r in RUNTIMES.values():
     _r["file"]["url"] = CRISPASR_RELEASE + _r["file"]["path"]
 
@@ -103,8 +111,8 @@ def installed(cfg, name):
 
 def urls(f, source):
     """从某个来源下载一个文件要用的 URL，按顺序排列（只有 GitHub 分卷时才有多个）。"""
-    if "url" in f:  # 运行库只有官方一个来源
-        return [f["url"]]
+    if "url" in f:  # 运行库：官方地址，或者加速镜像前缀加官方地址
+        return [f["url"]] if source == "official" else [GH_PROXIES[source] + f["url"]]
     name = Path(f["path"]).name
     if source == "hf":
         return [f"https://huggingface.co/{f['repo']}/resolve/main/{name}"]

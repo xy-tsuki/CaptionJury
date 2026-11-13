@@ -426,6 +426,9 @@ class Api:
     def sources(self):
         return [{"key": k, "label": v} for k, v in models.SOURCES.items()]
 
+    def runtime_sources(self):
+        return [{"key": k, "label": v} for k, v in models.RUNTIME_SOURCES.items()]
+
     def download_model(self, name, source):
         """排队下载一个模型缺的文件。"""
         return self._downloads.add(name, source)
