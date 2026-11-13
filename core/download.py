@@ -21,6 +21,9 @@ class Cancelled(Exception):
     pass
 
 
+CANCELLED = "已取消，下载了一半的文件已删除"
+
+
 def _fetch(client, url, out, have, part_size, on_bytes, cancelled):
     """把一个 URL 从第 have 个字节起追加写进 out；返回这一卷写完后的字节数。"""
     headers = {"Range": f"bytes={have}-"} if have else {}
@@ -105,7 +108,7 @@ class Downloader:
     """后台按顺序下载用户点过的模型和运行库。同一时间只下一个文件，状态给界面轮询。
 
     暂停：打断正在下的文件（.part 留着），把它放回队首，整个队列停下；继续时用 Range 从断点接着下。
-    取消：可以只取消一项（正在下的或排队的），也可以全部取消；取消的 .part 也留着，再点下载会接着下。
+    取消：可以只取消一项（正在下的或排队的），也可以全部取消；下了一半的文件一起删掉，再下载从头开始。
     """
 
     def __init__(self, load_config, save_config):
@@ -143,16 +146,20 @@ class Downloader:
             cur = (self.state["current"] or {}).get("name")
             if name is None:
                 for n in self.queue:
-                    self.state["failed"][n] = "已取消，再点下载会接着下"
+                    self.state["failed"][n] = CANCELLED
+                    self._discard(n)
                 self.queue.clear()
                 self.state["paused"] = False
-                if cur:
+                if self._thread and self._thread.is_alive():
                     self._stop = "cancel"
+                else:  # 暂停着、没有线程在下：暂停的那项已经在上面随队列删掉了
+                    self.state["current"] = None
             elif name == cur:
                 self._stop = "cancel"
-            elif name in self.queue:
+            elif name in self.queue:  # 排队的（包括暂停着的那项）没有线程在写，直接删
                 self.queue.remove(name)
-                self.state["failed"][name] = "已取消，再点下载会接着下"
+                self.state["failed"][name] = CANCELLED
+                self._discard(name)
             if self.state["paused"] and not self.queue:  # 暂停着的那项被取消了，就没有可继续的了
                 self.state["paused"] = False
                 self.state["current"] = None
@@ -199,9 +206,30 @@ class Downloader:
                             return
                         continue  # 线程退出前用户已经点了继续
                     self._stop = None
-                    self.state["failed"][name] = "已取消，再点下载会接着下"
+                    self.state["failed"][name] = CANCELLED
+                    self._discard(name)  # 线程已经不再写这个文件了，可以删
             except Exception as e:
                 self.state["failed"][name] = str(e)[:300]
+
+    def _discard(self, name):
+        """删掉一项下了一半的文件（.part、没解压的运行库 zip、解压到一半的目录），不碰已经装好的文件。"""
+        cfg = self.load_config()
+        if name not in cfg and not name.startswith("runtime_") and not all(k in cfg for k in models.MODELS[name]["files"]):
+            return
+        if name.startswith("runtime_"):
+            if name not in cfg:
+                return
+            target = Path(cfg[name])
+            z = target.parent / models.RUNTIMES[name.removeprefix("runtime_")]["file"]["path"]
+            junk = [z.with_name(z.name + ".part"), z]
+            shutil.rmtree(target.with_name(target.name + ".unzip"), ignore_errors=True)
+        else:
+            junk = [Path(cfg[key]).with_name(Path(cfg[key]).name + ".part") for key in models.MODELS[name]["files"]]
+        for p in junk:
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:  # 被占用时留着，下次覆盖
+                pass
 
     def _one(self, name):
         if name.startswith("runtime_"):

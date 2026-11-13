@@ -202,6 +202,18 @@ wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
 dl.cancel(name)
 wait(lambda: not dl._thread.is_alive())
 assert "已取消" in dl.status()["failed"][name] and not dl.queue
+assert not (tmp / "q" / "big.gguf.part").exists()  # 取消就删掉下了一半的文件
+
+cfg["whisper_model"] = str(tmp / "r" / "big.gguf")  # 暂停后再取消：排队里的那项直接删
+dl.add(name, "hf")
+wait(lambda: (dl.state["current"] or {}).get("done", 0) > 100_000)
+dl.pause()
+wait(lambda: not dl._thread.is_alive())
+assert (tmp / "r" / "big.gguf.part").exists()
+dl.cancel()
+st = dl.status()
+assert not st["paused"] and not st["queue"] and st["current"] is None and "已取消" in st["failed"][name], st
+assert not (tmp / "r" / "big.gguf.part").exists()
 dl.pause()  # 没东西可暂停时什么也不做
 assert not dl.status()["paused"]
 SLOW[0] = False

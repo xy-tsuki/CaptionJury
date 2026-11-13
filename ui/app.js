@@ -1168,7 +1168,7 @@ async function renderDownloads() {
   }
   const failed = Object.entries(st.failed);
   if (failed.length) {
-    items.push(`<p class="dl-sec">没有完成</p>` + failed.map(([n, why]) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="sp"><button class="btn sm" type="button" data-dlretry="${n}">${why.includes('已取消') ? '接着下' : '重试'}</button></span></div><div class="meta${why.includes('已取消') ? '' : ' err'}">${esc(why)}</div></div>`).join(''));
+    items.push(`<p class="dl-sec">没有完成</p>` + failed.map(([n, why]) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="sp"><button class="btn sm" type="button" data-dlretry="${n}">${why.includes('已取消') ? '重新下载' : '重试'}</button></span></div><div class="meta${why.includes('已取消') ? '' : ' err'}">${esc(why)}</div></div>`).join(''));
   }
   if (st.done.length) {
     items.push(`<p class="dl-sec">这次打开程序后下完的</p>` + [...st.done].reverse().map((n) => `<div class="dl-item"><div class="top"><b>${L(n)}</b><span class="faint small">已完成</span></div></div>`).join(''));
