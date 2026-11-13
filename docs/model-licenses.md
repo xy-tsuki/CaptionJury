@@ -5,6 +5,7 @@
 | 模型 | 下载来源（GGUF 转换） | 许可证 | 上游原始模型 | 上游许可证 |
 |---|---|---|---|---|
 | Qwen3-ASR 1.7B | cstr/qwen3-asr-1.7b-GGUF | Apache-2.0 | Qwen/Qwen3-ASR-1.7B | Apache-2.0 |
+| Qwen3-ASR 0.6B（轻量模式，q4_k） | cstr/qwen3-asr-0.6b-GGUF | Apache-2.0 | Qwen/Qwen3-ASR-0.6B | Apache-2.0 |
 | Qwen3-ForcedAligner 0.6B | cstr/qwen3-forced-aligner-0.6b-GGUF | Apache-2.0 | Qwen/Qwen3-ForcedAligner-0.6B | Apache-2.0 |
 | MOSS-Transcribe-Diarize 0.9B | cstr/MOSS-Transcribe-Diarize-GGUF | Apache-2.0 | OpenMOSS-Team/MOSS-Transcribe-Diarize | Apache-2.0 |
 | MiMo-V2.5-ASR | cstr/mimo-asr-GGUF | MIT | XiaomiMiMo/MiMo-V2.5-ASR | MIT |
